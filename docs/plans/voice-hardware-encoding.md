@@ -7,6 +7,11 @@ encode each shared track once and send that same stream to every peer, instead
 of running one encoder per peer connection. The sender chooses the codec:
 H.264 (default), H.265 or AV1.
 
+The target is high-resolution gameplay: capture a 7680×2160 240 Hz desktop,
+scale it on the GPU and send it as 3840×1080 at 60 fps to several peers, from
+one NVENC session. The reference sender is an RTX 5090 (hardware AV1) with
+300 Mbps of upload.
+
 The audience is friends sharing gameplay. Simple, reliable code matters more
 than smooth playback for every peer, so the design makes deliberate
 concessions:
@@ -15,7 +20,7 @@ concessions:
 | --- | --- |
 | Order | Hardware encoder first, then encode-once |
 | Codec | Sender picks H.264 (default), H.265 or AV1; only codecs the sender's GPU encodes in hardware are offered |
-| Bitrate, resolution, frame rate | Fixed by a sender preset (e.g. 720p60, 1080p60); peers never lower it |
+| Bitrate, resolution, frame rate | Fixed by a sender preset (e.g. 720p60, 1080p60, half of the source at 60 fps); peers never lower it |
 | Keyframes | Fixed interval chosen by the sender; keyframe requests from peers are ignored |
 | Slow or late peers | Freeze or wait until the next keyframe (up to ~5 s is acceptable) |
 | Peer that can't decode the codec | Gets no video, with a message saying why; no fallback encoder |
@@ -77,8 +82,20 @@ Its NVENC code is Linux-only.
   recommending AV1 widely. Media Foundation H.265 decoding can require
   Microsoft's paid HEVC Video Extensions on some Windows machines, so desktop
   H.265 decoding uses ffmpeg in software.
-- **Upload.** In mesh the sender uploads one copy per peer. 1080p60 at about
-  10 Mbps to 3 peers needs about 30 Mbps of upload.
+- **Upload.** In mesh the sender uploads one copy per peer. Typical rates for
+  fast-moving gameplay at 3840×1080, 60 fps (estimates, not measurements):
+
+  | Codec | Bitrate | Upload to 3 peers | Upload to 6 peers |
+  | --- | --- | --- | --- |
+  | H.264 | ~25 Mbps | ~75 Mbps | ~150 Mbps |
+  | H.265 | ~15 Mbps | ~45 Mbps | ~90 Mbps |
+  | AV1 | ~12 Mbps | ~36 Mbps | ~72 Mbps |
+
+  300 Mbps of upload covers every row, so the reference sender can spend more
+  bitrate per peer than these figures. Peers' download is the limit instead.
+- **H.264 level.** 3840×1080 at 60 fps needs High profile at level 5.1 or 5.2
+  (`profile-level-id` `640033` or `640034`); the default negotiated profile
+  stops around 720p. H.265 and AV1 need the matching level too.
 - **Licensing.**
   - NVENC: write our own wrapper against the MIT-licensed `nvEncodeAPI.h` or
     FFmpeg's `nv-codec-headers`, and load the driver DLL at runtime. NVIDIA's
@@ -91,7 +108,7 @@ Its NVENC code is Linux-only.
 
 Needed whatever else we choose. Done when a mesh call with screen share works
 on Windows with software encoding, and we have CPU and frame-rate numbers at
-1080p and 1440p as a baseline.
+1080p, 1440p and the 7680×2160 source as a baseline.
 
 - [ ] Add the Windows Flutter runner and build Voice with the stock libwebrtc.
 - [ ] Add a Windows CI job (format, analyze, build).
@@ -134,13 +151,21 @@ and diagnostics show which encoder ran.
 ## Phase 3 — Encode once, send to many
 
 One hardware encoder per shared track feeds every mesh peer; each peer
-connection only packetizes and encrypts. Done when a 1080p60 gameplay share
-to 3 peers uses one NVENC session in each codec, and a peer that drops frames
-freezes and recovers at the next keyframe without affecting the others.
+connection only packetizes and encrypts. Captured frames stay on the GPU
+from capture to encoder.
+
+Done when:
+
+- a 7680×2160 240 Hz source is sent as 3840×1080 at 60 fps AV1 to 3 peers,
+  using one NVENC session and no CPU frame copies on the sender;
+- the same works with H.264 and H.265;
+- a peer that drops frames freezes and recovers at the next keyframe without
+  affecting the others.
 
 ```mermaid
 flowchart TD
-  capture[Screen capture] --> encoder["Shared hardware encoder<br/>codec + preset fixed by sender<br/>keyframe every N s"]
+  capture["Screen capture (WGC or DXGI)<br/>D3D11 texture, sampled at 60 fps"] --> scale["ID3D11VideoProcessor<br/>scale + convert to NV12 on the GPU"]
+  scale --> encoder["Shared hardware encoder<br/>codec + preset fixed by sender<br/>keyframe every N s"]
   encoder --> passA
   encoder --> passB
   encoder --> passC
@@ -160,22 +185,50 @@ peer does changes the shared stream.
 
 ### Parts (C++ in our libwebrtc fork)
 
-1. **Shared encoder.** Owns the hardware session. Its settings come only from
+1. **GPU capture and scaling.** At 7680×2160 a captured frame is about 66 MB.
+   At 60 fps the current CPU path would copy and convert about 4 GB/s, so
+   frames must stay on the GPU:
+   - Capture with WGC or DXGI and keep the `ID3D11Texture2D` in a native
+     `VideoFrameBuffer`. Sample at the preset's frame rate, not the display's
+     240 Hz.
+   - Scale and convert to NV12 in one `ID3D11VideoProcessor` pass, as Litecord
+     does. NVENC doesn't scale its input. Halving 7680×2160 to 3840×1080 keeps
+     the 32:9 aspect ratio.
+   - Hand the texture to NVENC as DirectX input, or to Media Foundation
+     through `IMFDXGIDeviceManager`.
+   - Keep CPU conversion only as a fallback, for local preview and software
+     encoders.
+2. **Shared encoder.** Owns the hardware session. Its settings come only from
    the sender: codec, resolution, frame rate, CBR bitrate and a fixed keyframe
    interval.
-2. **Passthrough encoder per peer**, modelled on LiveKit's
+3. **Passthrough encoder per peer**, modelled on LiveKit's
    `passthrough_video_encoder.cpp`. Forwards the shared encoded frames,
    ignores requested rate changes and keyframe requests, and reports no
    scaling and trusted rate control so libwebrtc doesn't resize anything. It
    fills in the codec-specific frame information libwebrtc needs to packetize:
    simple for H.264 and H.265, more involved for AV1, whose packets need a
    frame-dependency header on every frame (LiveKit has done this).
-3. **Per-peer keyframe gate.** The only per-peer logic, and it can't be
+4. **Per-peer keyframe gate.** The only per-peer logic, and it can't be
    skipped. If libwebrtc drops a frame for one peer, that peer gets nothing
    until the next keyframe. Otherwise its next frame would point at the wrong
    reference and decode corrupted instead of freezing.
-4. **Factory wiring and a "shared encode" track flag** exposed through
+5. **Factory wiring and a "shared encode" track flag** exposed through
    `flutter_webrtc`.
+
+### Required libwebrtc settings
+
+The passthrough sends at the preset's fixed bitrate. If that exceeds what
+libwebrtc allows for a peer, libwebrtc drops frames for that peer, and the
+keyframe gate turns each drop into a freeze until the next keyframe. These
+settings are therefore part of the design, not tuning:
+
+- Set the sender's maximum bitrate (`encodings[].maxBitrate`) to the preset's
+  rate. Without it libwebrtc caps video at roughly 2.5 Mbps.
+- Raise the bandwidth estimate's start and minimum bitrates to the preset's
+  rate. The estimate otherwise starts at a few hundred kbps, and the peer
+  freezes repeatedly while it climbs.
+- Negotiate a codec level that covers the preset (see Constraints).
+- Pin all three in tests.
 
 ### Dart side (`MeshVoiceMediaSession`)
 
@@ -183,8 +236,9 @@ peer does changes the shared stream.
 - Set the chosen codec as the sender's codec preference, and keep resolution
   fixed under congestion.
 - Add a picker for codec and preset. Offer only codecs the GPU encodes in
-  hardware, and show the upload it needs ("needs ~X Mbps upload with N
-  viewers").
+  hardware, include presets that halve the source resolution, and show the
+  upload it needs ("needs ~X Mbps upload with N viewers").
+- Lay out 32:9 video tiles without shrinking them into a letterbox.
 - Tell a peer that can't decode the chosen codec why it has no video.
 
 ### Rules
@@ -210,25 +264,18 @@ fallback encoder.
 - Dart tests in the style of the existing Voice session tests, pinning the
   sender parameters and codec preference.
 
-## Phase 4 (optional) — Zero-copy capture
+## Phase 4 — Receivers, if measurements demand it
 
-Today each captured frame is copied off the GPU, converted twice on the CPU
-(BGRA to I420, then to NV12) and uploaded back to the encoder: about 14.7 MB of
-readback per 1440p frame. Encode-once makes the fix easier, because the shared
-encoder sits outside libwebrtc and libwebrtc never touches the pixels.
+Measure receivers at the 3840×1080, 60 fps target before building anything
+here.
 
-- [ ] Keep the WGC or DXGI `ID3D11Texture2D` in a native `VideoFrameBuffer`.
-- [ ] Feed NVENC directly (DirectX input), or Media Foundation through
-  `IMFDXGIDeviceManager`; convert with `ID3D11VideoProcessor` as Litecord
-  does.
-- [ ] Keep CPU conversion only as a fallback, for local preview and software
-  encoders.
-
-Hardware decoding on desktop (Media Foundation on Windows, VA-API or NVDEC on
-Linux) can follow in the same fork. It mainly helps laptops on battery: one
-1080p60 stream decodes cheaply in software on a gaming PC, and
-`flutter_webrtc` copies decoded frames through the CPU into the Flutter
-texture either way.
+- **Decoding.** A 3840×1080 60 fps H.264 stream is heavy for ffmpeg's
+  software decoder; dav1d copes better with AV1 on desktop. If software
+  decoding can't keep up, add hardware decoders in the same fork (Media
+  Foundation on Windows, VA-API or NVDEC on Linux).
+- **Drawing.** `flutter_webrtc` converts each decoded frame to RGBA on the CPU
+  and copies it into a Flutter texture: about 1 GB/s at this size. If that
+  costs too much, pair hardware decoding with a GPU texture path into Flutter.
 
 ## Open questions
 
@@ -240,6 +287,9 @@ texture either way.
   1080p60, 2–5 s)?
 - [ ] Do browser peers on the Discourse web client join mesh calls, and which
   browsers must watch H.265 and AV1 streams?
+- [ ] With Windows HDR on, captured frames need converting to SDR. Can the
+  same `ID3D11VideoProcessor` pass do it acceptably, or do we need a tone-map
+  shader?
 - [ ] Does Linux get hardware encoding later (NVENC or VA-API)? LiveKit's
   Linux code is the reference.
 - [ ] Counsel review of H.264 and H.265 royalties.
