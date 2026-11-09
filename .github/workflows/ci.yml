@@ -169,6 +169,11 @@ jobs:
           # by relative path from the same deep tree, so shorten it too.
           mkdir -p /c/p
           echo 'PUB_CACHE=C:\p' >> "$GITHUB_ENV"
+          # cl.exe still receives long relative source paths from libavif's
+          # deep build tree: allow long paths and avoid the MSBuild generator.
+          git config --global core.longpaths true
+          powershell -NoProfile -Command "Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Type DWord -Value 1"
+          echo 'CMAKE_GENERATOR=Ninja' >> "$GITHUB_ENV"
 
       - name: Resolve root and compatibility package graphs
         working-directory: C:/w
