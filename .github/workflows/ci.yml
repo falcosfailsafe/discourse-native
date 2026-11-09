@@ -165,6 +165,10 @@ jobs:
         run: |
           # A local clone, not cp: the tree contains symlinks Windows can't copy.
           git clone -q --no-hardlinks "$GITHUB_WORKSPACE" /c/w
+          # The pub cache holds libavif's sources, which its build references
+          # by relative path from the same deep tree, so shorten it too.
+          mkdir -p /c/p
+          echo 'PUB_CACHE=C:\p' >> "$GITHUB_ENV"
 
       - name: Resolve root and compatibility package graphs
         working-directory: C:/w
