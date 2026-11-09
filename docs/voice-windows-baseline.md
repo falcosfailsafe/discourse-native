@@ -13,7 +13,7 @@ platform, or from a different build. Prefer a blank over a guess.
 
 | Item | State |
 | --- | --- |
-| Windows runner and CI build | Added; the CI job has not yet run on a Windows runner |
+| Windows runner and CI build | `windows-bundle` passes on a Windows runner (format, analyze, debug bundle built against the pinned custom `libwebrtc.dll`). The app has not been run on Windows hardware |
 | Mesh call with screen share verified on Windows | Not done |
 | Baseline runs | Not done |
 
@@ -30,6 +30,21 @@ platform, or from a different build. Prefer a blank over a guess.
 - Windows HDR, game mode and power plan noted and kept the same across runs.
   Use the High performance power plan.
 - Nothing else heavy running. Note anything that is.
+
+### Building on Windows
+
+`flutter build windows` currently needs two workarounds that the CI job
+(`windows-bundle` in `.github/workflows/ci.yml`) applies; without them the
+build fails for reasons unrelated to Voice:
+
+- **libavif 0.1.1 (AVIF decoder).** Its dav1d build passes `cl.exe` source
+  paths longer than MAX_PATH from the deep `.dart_tool` tree, and its
+  `build.rs` looks for `dav1d.lib` while Meson writes `libdav1d.a`. CI clones
+  to `C:\w`, sets `PUB_CACHE=C:\p` and patches `native/build.rs` in the CI
+  copy of the package (see the "Patch libavif" step). Locally, build from a
+  short path and apply the same patch to your pub cache, or expect to fail.
+- **webview_all_windows.** Uses `/await`; `windows/CMakeLists.txt` defines
+  `_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS` for the newer MSVC STL.
 
 ## Procedure
 

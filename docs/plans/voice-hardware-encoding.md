@@ -30,8 +30,9 @@ The Windows runner/CI, shared-encoder Dart controls and native bridge, and
 GPU/NVENC/passthrough source overlay are implemented. The custom Windows
 `libwebrtc.dll` builds in CI (fork run 42673102915, including the C++ unit
 tests) and is published as `discourse.m150.7871.07.2`; its SHA-256 is pinned in
-`libwebrtc_version.ini`. **Phase 2 is not yet accepted:** the Windows app build
-and the hardware acceptance call below must still pass on an NVIDIA machine.
+`libwebrtc_version.ini`. **Phase 2 is not yet accepted:** the
+hardware acceptance call below must still pass on an NVIDIA machine
+(the Windows app builds in CI, but has never been run).
 Nothing has run on a GPU yet.
 
 - Build recipe, immutable source pins and fork instructions:
@@ -112,8 +113,9 @@ Done when a mesh call with screen share works on Windows with today's software
 encoding, and we have CPU and frame-rate numbers at 1080p and at the
 7680×2160 source as a baseline.
 
-- [ ] Add the Windows Flutter runner and build Voice with the stock libwebrtc.
-  (Runner added; not yet built on Windows, so left open until CI passes.)
+- [x] Add the Windows Flutter runner and build Voice on Windows. (CI builds the
+  debug bundle; it now links our pinned libwebrtc rather than the stock one.
+  Not yet run with a screen share on Windows hardware.)
 - [x] Add a Windows CI job (format, analyze, build). (`windows-bundle` in `ci.yml`.)
 - [x] Cover the Windows plugin files in `tool/vendor_provenance_contract.dart`.
 - [ ] Record the baseline. Procedure and empty results table:
@@ -129,8 +131,8 @@ Done when the app runs on our build with no change in behaviour.
   `webrtc-sdk/webrtc` `m150_release` commit. (`m150_release` is not a branch in
   the wrapper repository.)
 - [x] Build `libwebrtc.dll` (x64) in CI and point `libwebrtc_version.ini` at
-  our release (`discourse.m150.7871.07.2`, SHA-256 pinned). The app has not yet
-  been built against it on Windows.
+  our release (`discourse.m150.7871.07.2`, SHA-256 pinned). The `windows-bundle` CI job builds the
+  app against it and checks the shared-screen export.
 - [x] Document the fork in `PATCHES.md` and extend the provenance check.
 
 ## Phase 2 — Shared NVENC screen share (H.264)
