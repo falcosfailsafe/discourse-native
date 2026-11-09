@@ -131,7 +131,7 @@ jobs:
 
   windows-bundle:
     # Voice screen share targets Windows (docs/plans/voice-hardware-encoding.md).
-    # Keep the runner, the stock libwebrtc download and the plugin graph
+    # Keep the runner, the pinned custom libwebrtc download and the plugin graph
     # buildable. The full test suite stays on Linux.
     needs: checks
     if: always() && (needs.checks.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.windows_only == true))
@@ -157,12 +157,23 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Move to a short path
+        # libavif's native build nests CMake scratch directories under
+        # .dart_tool; from D:\a\<repo>\<repo> they exceed MSVC's 260-character
+        # limit and fail with C1083. Use a real short directory (a subst drive
+        # would be resolved back to the long path).
+        run: |
+          mkdir -p /c/w
+          cp -a "$GITHUB_WORKSPACE/." /c/w/
+
       - name: Resolve root and compatibility package graphs
+        working-directory: C:/w
         run: |
           flutter pub get --enforce-lockfile
           (cd packages/discourse_voice && flutter pub get --enforce-lockfile)
 
       - name: Check formatting
+        working-directory: C:/w
         run: |
           dart format --output=none --set-exit-if-changed \
             lib test integration_test tool \
@@ -170,6 +181,7 @@ jobs:
             packages/discourse_voice/tool
 
       - name: Analyze
+        working-directory: C:/w
         run: |
           flutter analyze
           (cd packages/discourse_voice && flutter analyze)
@@ -178,17 +190,20 @@ jobs:
         uses: ./.github/actions/setup-avif
 
       - name: Build Windows bundle
+        working-directory: C:/w
         run: flutter build windows --debug
 
       - name: Smoke-check bundle
+        working-directory: C:/w
         run: |
           set -euxo pipefail
           bundle=build/windows/x64/runner/Debug
           test -f "$bundle/discourse_native.exe"
           test -f "$bundle/flutter_windows.dll"
-          # Voice's WebRTC plugin and the stock prebuilt libwebrtc it bundles.
+          # Voice's WebRTC plugin and the pinned custom libwebrtc it bundles.
           test -f "$bundle/flutter_webrtc_plugin.dll"
           test -f "$bundle/libwebrtc.dll"
+          grep -aq LibWebRTCSharedScreenCreateSource "$bundle/libwebrtc.dll"
           test -f "$bundle/livekit_client_plugin.dll"
 
   apple-bundles:
