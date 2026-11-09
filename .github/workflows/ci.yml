@@ -169,19 +169,29 @@ jobs:
           # by relative path from the same deep tree, so shorten it too.
           mkdir -p /c/p
           echo 'PUB_CACHE=C:\p' >> "$GITHUB_ENV"
-          # libavif's dav1d is built by CMake. Its default Visual Studio
-          # generator hands cl.exe long relative source paths from the deep
-          # .dart_tool tree, which fail at MAX_PATH. The Dart build hook
-          # drops the parent environment, but Cargo's [env] table still
-          # reaches build scripts, so select the Ninja generator there.
-          mkdir -p "$USERPROFILE/.cargo"
-          printf '[env]\nCMAKE_GENERATOR = "Ninja"\n' >> "$USERPROFILE/.cargo/config.toml"
 
       - name: Resolve root and compatibility package graphs
         working-directory: C:/w
         run: |
           flutter pub get --enforce-lockfile
           (cd packages/discourse_voice && flutter pub get --enforce-lockfile)
+
+      - name: Build libavif outside the deep .dart_tool tree
+        # libavif builds dav1d with Meson, which hands cl.exe source paths
+        # relative to a build directory ~16 levels down, past MAX_PATH. Until
+        # that is fixed upstream, point CMake's output at a short directory in
+        # the CI copy of the package only (the source stays pinned by the lockfile).
+        working-directory: C:/w
+        run: |
+          set -euxo pipefail
+          build_rs="/c/p/hosted/pub.dev/libavif-0.1.1/native/build.rs"
+          grep -q 'let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));' "$build_rs"
+          grep -q 'let mut config = cmake::Config::new(&source_dir);' "$build_rs"
+          sed -i \
+            -e 's|let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));|let out_dir = PathBuf::from("C:/o");|' \
+            -e 's|let mut config = cmake::Config::new(&source_dir);|let mut config = cmake::Config::new(\&source_dir);\n    config.out_dir(\&out_dir);|' \
+            "$build_rs"
+          grep -n 'out_dir' "$build_rs" | head
 
       - name: Check formatting
         working-directory: C:/w
