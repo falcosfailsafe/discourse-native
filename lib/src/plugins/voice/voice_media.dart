@@ -481,10 +481,7 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier
            getUserMedia ??
            ((constraints) =>
                rtc.navigator.mediaDevices.getUserMedia(constraints)),
-       _getDisplayMedia =
-           getDisplayMedia ??
-           ((constraints) =>
-               rtc.navigator.mediaDevices.getDisplayMedia(constraints)),
+       _getDisplayMedia = getDisplayMedia ?? _captureDisplayMedia,
        _getSharedScreenCapabilities =
            getSharedScreenCapabilities ?? rtc.SharedScreenEncoder.capabilities,
        _getSharedScreenMedia =
@@ -1696,6 +1693,29 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier
       Error.throwWithStackTrace(error, stackTrace);
     }
     changed();
+  }
+
+  static Future<rtc.MediaStream> _captureDisplayMedia(
+    Map<String, dynamic> constraints,
+  ) async {
+    final mediaDevices = rtc.navigator.mediaDevices;
+    if (!Platform.isWindows) return mediaDevices.getDisplayMedia(constraints);
+
+    // Windows getDisplayMedia looks up the source in the desktop list cache.
+    // Voice has no picker to populate that cache before software fallback.
+    final screens = await rtc.desktopCapturer.getSources(
+      types: [rtc.SourceType.Screen],
+    );
+    final screen =
+        screens.where((source) => source.id == '0').firstOrNull ??
+        screens.firstOrNull;
+    if (screen == null) throw StateError('No screen source is available');
+    return mediaDevices.getDisplayMedia({
+      ...constraints,
+      'video': {
+        'deviceId': {'exact': screen.id},
+      },
+    });
   }
 
   /// Captures the screen through the shared hardware encoder when the
