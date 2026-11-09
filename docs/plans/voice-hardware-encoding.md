@@ -27,10 +27,12 @@ concessions:
 ## Implementation status
 
 The Windows runner/CI, shared-encoder Dart controls and native bridge, and
-GPU/NVENC/passthrough source overlay are implemented. **Phase 2 is not yet
-accepted:** the custom Windows DLL/app builds and the hardware acceptance call
-below must pass. The shipped manifest intentionally remains on the stock
-binary until a custom release is successfully built, tested and SHA-256-pinned.
+GPU/NVENC/passthrough source overlay are implemented. The custom Windows
+`libwebrtc.dll` builds in CI (fork run 42673102915, including the C++ unit
+tests) and is published as `discourse.m150.7871.07.2`; its SHA-256 is pinned in
+`libwebrtc_version.ini`. **Phase 2 is not yet accepted:** the Windows app build
+and the hardware acceptance call below must still pass on an NVIDIA machine.
+Nothing has run on a GPU yet.
 
 - Build recipe, immutable source pins and fork instructions:
   [`tool/libwebrtc/README.md`](../../tool/libwebrtc/README.md).
@@ -126,9 +128,9 @@ Done when the app runs on our build with no change in behaviour.
   and pin its `libwebrtc.m150.7871.07` wrapper plus the underlying
   `webrtc-sdk/webrtc` `m150_release` commit. (`m150_release` is not a branch in
   the wrapper repository.)
-- [ ] Build `libwebrtc.dll` (x64) in CI and point `libwebrtc_version.ini` at
-  our release. The workflow and per-Windows URL/version/SHA-256 selection are
-  implemented; successful build and release pinning remain acceptance gates.
+- [x] Build `libwebrtc.dll` (x64) in CI and point `libwebrtc_version.ini` at
+  our release (`discourse.m150.7871.07.2`, SHA-256 pinned). The app has not yet
+  been built against it on Windows.
 - [x] Document the fork in `PATCHES.md` and extend the provenance check.
 
 ## Phase 2 — Shared NVENC screen share (H.264)
