@@ -214,6 +214,14 @@ jobs:
         working-directory: C:/w
         run: flutter build windows --debug
 
+      - name: Show native build logs on failure
+        if: failure()
+        run: |
+          for f in $(find /c/o -name meson-log.txt -o -name CMakeError.log -o -name CMakeOutput.log 2>/dev/null | head -5); do
+            echo "=== $f"; tail -n 60 "$f"
+          done
+          find /c/o -name '*.log' 2>/dev/null | head -20
+
       - name: Smoke-check bundle
         working-directory: C:/w
         run: |
