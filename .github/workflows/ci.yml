@@ -176,22 +176,36 @@ jobs:
           flutter pub get --enforce-lockfile
           (cd packages/discourse_voice && flutter pub get --enforce-lockfile)
 
-      - name: Build libavif outside the deep .dart_tool tree
-        # libavif builds dav1d with Meson, which hands cl.exe source paths
-        # relative to a build directory ~16 levels down, past MAX_PATH. Until
-        # that is fixed upstream, point CMake's output at a short directory in
-        # the CI copy of the package only (the source stays pinned by the lockfile).
+      - name: Patch libavif's native build for Windows (CI copy only)
+        # Two upstream problems, both specific to building libavif 0.1.1 on
+        # Windows. Meson runs cl.exe with source paths relative to a build
+        # directory ~16 levels down, past MAX_PATH, so build under a short
+        # directory. Meson also names the MSVC static library libdav1d.a while
+        # build.rs looks for dav1d.lib, so copy it. Only the CI copy of the
+        # package is patched; the lockfile still pins the source.
         working-directory: C:/w
         run: |
           set -euxo pipefail
-          build_rs="/c/p/hosted/pub.dev/libavif-0.1.1/native/build.rs"
-          grep -q 'let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));' "$build_rs"
-          grep -q 'let mut config = cmake::Config::new(&source_dir);' "$build_rs"
-          sed -i \
-            -e 's|let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));|let out_dir = PathBuf::from("C:/o");|' \
-            -e 's|let mut config = cmake::Config::new(&source_dir);|let mut config = cmake::Config::new(\&source_dir);\n    config.out_dir(\&out_dir);|' \
-            "$build_rs"
-          grep -n 'out_dir' "$build_rs" | head
+          python - <<'PY'
+          import re
+          path = "C:/p/hosted/pub.dev/libavif-0.1.1/native/build.rs"
+          s = open(path).read()
+          def sub(old, new):
+              global s
+              assert old in s, old
+              s = s.replace(old, new, 1)
+          sub('let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));',
+              'let out_dir = PathBuf::from("C:/o");')
+          sub('let mut config = cmake::Config::new(&source_dir);',
+              'let mut config = cmake::Config::new(&source_dir);\n    config.out_dir(&out_dir);')
+          sub('"dav1d.lib"', '"libdav1d.a"')
+          sub('    let libyuv_library =',
+              '    if target.contains("msvc") {\n'
+              '        fs::copy(&dav1d_library, dav1d_library.with_file_name("dav1d.lib")).expect("copy dav1d.lib");\n'
+              '    }\n    let libyuv_library =')
+          open(path, "w").write(s)
+          PY
+          grep -n 'out_dir\|dav1d.lib\|libdav1d.a' /c/p/hosted/pub.dev/libavif-0.1.1/native/build.rs
 
       - name: Check formatting
         working-directory: C:/w
