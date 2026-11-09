@@ -203,9 +203,9 @@ bool FindOutput(const OutputSelector& selector, ComPtr<IDXGIAdapter1>* adapter,
   return false;
 }
 
-// Refuses outputs whose pixels would come out wrong: rotated, or anything but
-// 8-bit BGRA sRGB. Without `duplication` only what the output reports is
-// checked.
+// Refuses rotated outputs and non-SDR color spaces. The duplication mode can
+// report a different format than the texture returned by AcquireNextFrame.
+// CaptureNext checks the texture's BGRA8 format before conversion.
 bool CheckOutputSupported(IDXGIOutput* output,
                           const DXGI_OUTDUPL_DESC* duplication,
                           std::string* error) {
@@ -224,12 +224,6 @@ bool CheckOutputSupported(IDXGIOutput* output,
     if (duplication->Rotation != DXGI_MODE_ROTATION_IDENTITY &&
         duplication->Rotation != DXGI_MODE_ROTATION_UNSPECIFIED) {
       SetError(error, "rotated displays are not supported");
-      return false;
-    }
-    if (duplication->ModeDesc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
-      SetError(error,
-               "the display is not 8-bit BGRA (HDR or wide-color is on); "
-               "screen share needs an SDR display");
       return false;
     }
   }

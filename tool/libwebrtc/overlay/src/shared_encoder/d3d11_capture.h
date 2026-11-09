@@ -13,10 +13,10 @@
 // thread. The device is switched to multithread-protected mode so NVENC may
 // use it from its own thread.
 //
-// Not supported, and refused at Create() rather than captured with wrong
-// colors: rotated outputs, and HDR / wide-gamut outputs (anything other than
-// 8-bit BGRA sRGB). The mouse cursor is not part of the duplicated image and
-// is not drawn. Protected content is captured black by the OS.
+// Rotated outputs and HDR / wide-gamut color spaces are refused at Create().
+// The acquired desktop texture must be 8-bit BGRA before conversion.
+// The mouse cursor is not part of the duplicated image and is not drawn.
+// Protected content is captured black by the OS.
 //
 // Colors: sRGB full-range RGB is converted to BT.709 limited-range ("16-235")
 // NV12. The encoder must tag its stream the same way.

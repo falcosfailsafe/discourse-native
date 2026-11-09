@@ -6,6 +6,6 @@
   "webrtc_revision": "83af826464a3212bf452fcb3a8d0619e7d77a368",
   "depot_tools_revision": "96a7c1418eedaa6bea333a8941e8a0078681b4d0",
   "release_repository": "falcosfailsafe/libwebrtc",
-  "release_tag": "discourse.m150.7871.07.2",
+  "release_tag": "discourse.m150.7871.07.3",
   "asset": "libwebrtc-win-x64-release.zip"
 }
