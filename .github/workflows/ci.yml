@@ -163,8 +163,8 @@ jobs:
         # limit and fail with C1083. Use a real short directory (a subst drive
         # would be resolved back to the long path).
         run: |
-          mkdir -p /c/w
-          cp -a "$GITHUB_WORKSPACE/." /c/w/
+          # A local clone, not cp: the tree contains symlinks Windows can't copy.
+          git clone -q --no-hardlinks "$GITHUB_WORKSPACE" /c/w
 
       - name: Resolve root and compatibility package graphs
         working-directory: C:/w
