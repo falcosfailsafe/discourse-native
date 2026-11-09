@@ -876,6 +876,33 @@ ChatMessagePage _chatPage(int id, {bool canLoadMorePast = false}) => (
 );
 
 void main() {
+  group('operating system policy', () {
+    test('supports every desktop system and iOS', () {
+      for (final os in ['ios', 'macos', 'linux', 'windows']) {
+        expect(VoiceController.supportsOperatingSystem(os), isTrue, reason: os);
+      }
+    });
+
+    test('leaves Android and unknown systems unsupported', () {
+      for (final os in ['android', 'fuchsia', '', 'Windows']) {
+        expect(
+          VoiceController.supportsOperatingSystem(os),
+          isFalse,
+          reason: os,
+        );
+      }
+    });
+
+    test('offers desktop controls on desktops only', () {
+      for (final os in ['macos', 'linux', 'windows']) {
+        expect(VoiceController.isDesktopOperatingSystem(os), isTrue);
+      }
+      for (final os in ['ios', 'android']) {
+        expect(VoiceController.isDesktopOperatingSystem(os), isFalse);
+      }
+    });
+  });
+
   const firstSite = 'https://one.example.com';
   const secondSite = 'https://two.example.com';
   late RecordingPluginTransport transport;

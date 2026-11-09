@@ -326,7 +326,19 @@ final class VoiceController extends ChangeNotifier {
   bool get cameraStarting => _calls.current?.cameraStarting ?? false;
   String? get activeSiteUrl => _call?.siteUrl;
   bool get supportedPlatform =>
-      Platform.isIOS || Platform.isMacOS || Platform.isLinux;
+      supportsOperatingSystem(Platform.operatingSystem);
+
+  /// Whether Voice runs on [operatingSystem], a `Platform.operatingSystem`
+  /// value. Android is deliberately unsupported.
+  static bool supportsOperatingSystem(String operatingSystem) =>
+      operatingSystem == 'ios' || isDesktopOperatingSystem(operatingSystem);
+
+  /// Whether [operatingSystem] has the desktop controls: a hardware keyboard
+  /// for push to talk, and screen capture.
+  static bool isDesktopOperatingSystem(String operatingSystem) =>
+      operatingSystem == 'macos' ||
+      operatingSystem == 'linux' ||
+      operatingSystem == 'windows';
   String? get audioInputDeviceId => _audioInputDeviceId;
   String? get audioOutputDeviceId => _audioOutputDeviceId;
   String? get cameraDeviceId => _cameraFacing == null ? _cameraDeviceId : null;

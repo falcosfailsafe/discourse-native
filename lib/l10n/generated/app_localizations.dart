@@ -5883,6 +5883,48 @@ abstract class AppLocalizations {
   /// **'Share screen'**
   String get shareScreen;
 
+  /// Voice screen share picker title and field label for the video quality preset.
+  ///
+  /// In en, this message translates to:
+  /// **'Screen share quality'**
+  String get screenShareQuality;
+
+  /// Voice screen share quality preset: 720p at 60 frames per second.
+  ///
+  /// In en, this message translates to:
+  /// **'720p, 60 fps'**
+  String get screenSharePreset720p60;
+
+  /// Voice screen share quality preset: 1080p at 60 frames per second.
+  ///
+  /// In en, this message translates to:
+  /// **'1080p, 60 fps'**
+  String get screenSharePreset1080p60;
+
+  /// Voice screen share quality preset: each dimension of the shared screen halved, at 60 frames per second.
+  ///
+  /// In en, this message translates to:
+  /// **'Half of your screen, 60 fps'**
+  String get screenSharePresetHalfSource60;
+
+  /// Voice screen share picker: the upload speed the chosen quality needs, in megabits per second, for the number of people watching.
+  ///
+  /// In en, this message translates to:
+  /// **'Needs about {mbps} Mbps upload with {viewers, plural, =1{1 viewer} other{{viewers} viewers}}'**
+  String screenShareUploadEstimate(int mbps, int viewers);
+
+  /// Voice call tile shown in place of your own preview while your screen is shared without a preview.
+  ///
+  /// In en, this message translates to:
+  /// **'You\'\'re sharing'**
+  String get youAreSharing;
+
+  /// Voice call tile note on a viewer whose app cannot decode the video format of your screen share.
+  ///
+  /// In en, this message translates to:
+  /// **'Can\'\'t receive your screen share'**
+  String get screenShareUnsupportedViewer;
+
   /// English UI message used by plugins/voice/voice_room_view.dart. Keep placeholders intact.
   ///
   /// In en, this message translates to:

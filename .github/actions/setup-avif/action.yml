@@ -1,5 +1,5 @@
 name: Set up AVIF build tools
-description: Build the pinned libavif native asset on Linux and Apple runners.
+description: Build the pinned libavif native asset on Linux, Apple and Windows runners.
 runs:
   using: composite
   steps:
@@ -9,6 +9,21 @@ runs:
         set -euo pipefail
         if [[ "$RUNNER_OS" == macOS ]]; then
           brew install cmake meson ninja nasm
+        elif [[ "$RUNNER_OS" == Windows ]]; then
+          # cmake, ninja and rustup ship on the hosted Windows image. Meson is
+          # not guaranteed there and NASM is only guaranteed at its install
+          # path, so install what is missing and put NASM on PATH.
+          python -m pip install --disable-pip-version-check meson
+          if ! command -v nasm >/dev/null; then
+            choco install nasm --no-progress -y
+          fi
+          for dir in "/c/Program Files/NASM" "/c/Program Files (x86)/NASM"; do
+            if [[ -x "$dir/nasm.exe" ]]; then
+              echo "$(cygpath -w "$dir")" >> "$GITHUB_PATH"
+            fi
+          done
+          command -v ninja >/dev/null || choco install ninja --no-progress -y
+          command -v cmake >/dev/null || choco install cmake --no-progress -y
         else
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential cmake meson ninja-build nasm

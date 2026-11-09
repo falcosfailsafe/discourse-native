@@ -1,0 +1,417 @@
+import("../webrtc.gni")
+
+declare_args() {
+  libwebrtc_intel_media_sdk = false
+  libwebrtc_desktop_capture = true
+}
+
+if (is_android) {
+  import("//build/config/android/config.gni")
+  import("//build/config/android/rules.gni")
+} else if (is_mac) {
+  import("//build/config/mac/rules.gni")
+} else if (is_ios) {
+  import("//build/config/ios/rules.gni")
+} else if (is_linux) {
+  import("//build/config/linux/pkg_config.gni")
+}
+
+if (is_linux) {
+  pkg_config("gio") {
+    packages = [
+      "gio-2.0",
+      "gio-unix-2.0",
+    ]
+  }
+}
+
+config("external_config") {
+  include_dirs = [ "include" ]
+  defines = []
+  if (is_win) {
+    defines += [ "LIB_WEBRTC_API_DLL" ]
+  }
+
+  # The public headers declare extra virtual methods under this define, so
+  # dependents need it too to agree on the vtable layout.
+  if (libwebrtc_desktop_capture) {
+    defines += [ "RTC_DESKTOP_DEVICE" ]
+  }
+}
+
+rtc_shared_library("libwebrtc") {
+  libs = []
+  cflags = []
+  include_dirs = [
+    ".",
+    "include",
+  ]
+
+  defines = [
+    "USE_LIBYUV",
+    "WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE",
+  ]
+
+  if (is_win) {
+    defines += [
+      "LIB_WEBRTC_API_EXPORTS",
+      "WEBRTC_WIN",
+    ]
+  }
+
+  if (is_linux) {
+    defines += [
+      "WEBRTC_LINUX",
+      "WEBRTC_POSIX",
+    ]
+  }
+
+  public_configs = [ ":external_config" ]
+
+  sources = [
+    "include/base/atomicops.h",
+    "include/base/fixed_size_function.h",
+    "include/base/portable.h",
+    "include/base/refcount.h",
+    "include/base/refcountedobject.h",
+    "include/base/scoped_ref_ptr.h",
+    "include/libwebrtc.h",
+    "include/rtc_audio_device.h",
+    "include/rtc_audio_processing.h",
+    "include/rtc_audio_source.h",
+    "include/rtc_audio_track.h",
+    "include/rtc_data_channel.h",
+    "include/rtc_data_packet_cryptor.h",
+    "include/rtc_dtls_transport.h",
+    "include/rtc_dtmf_sender.h",
+    "include/rtc_field_trials.h",
+    "include/rtc_frame_cryptor.h",
+    "include/rtc_ice_candidate.h",
+    "include/rtc_media_stream.h",
+    "include/rtc_media_track.h",
+    "include/rtc_mediaconstraints.h",
+    "include/rtc_peerconnection.h",
+    "include/rtc_peerconnection_factory.h",
+    "include/rtc_rtp_capabilities.h",
+    "include/rtc_rtp_parameters.h",
+    "include/rtc_rtp_receiver.h",
+    "include/rtc_rtp_sender.h",
+    "include/rtc_rtp_transceiver.h",
+    "include/rtc_session_description.h",
+    "include/rtc_types.h",
+    "include/rtc_video_device.h",
+    "include/rtc_video_frame.h",
+    "include/rtc_video_processor.h",
+    "include/rtc_video_renderer.h",
+    "include/rtc_video_source.h",
+    "include/rtc_video_track.h",
+    "include/rtc_logging.h",
+    "include/helper.h",
+    "src/helper.cc",
+    "src/base/portable.cc",
+    "src/internal/custom_audio_transport_impl.cc",
+    "src/internal/custom_audio_transport_impl.h",
+    "src/internal/local_audio_track.cc",
+    "src/internal/local_audio_track.h",
+    "src/internal/vcm_capturer.cc",
+    "src/internal/vcm_capturer.h",
+    "src/internal/video_capturer.cc",
+    "src/internal/video_capturer.h",
+    "src/libwebrtc.cc",
+    "src/rtc_audio_device_impl.cc",
+    "src/rtc_audio_device_impl.h",
+    "src/rtc_audio_processing_impl.cc",
+    "src/rtc_audio_processing_impl.h",
+    "src/rtc_audio_source_impl.cc",
+    "src/rtc_audio_source_impl.h",
+    "src/rtc_audio_track_impl.cc",
+    "src/rtc_audio_track_impl.h",
+    "src/rtc_data_packet_cryptor_impl.cc",
+    "src/rtc_data_packet_cryptor_impl.h",
+    "src/rtc_data_channel_impl.cc",
+    "src/rtc_data_channel_impl.h",
+    "src/rtc_dtls_transport_impl.cc",
+    "src/rtc_dtls_transport_impl.h",
+    "src/rtc_dtmf_sender_impl.cc",
+    "src/rtc_dtmf_sender_impl.h",
+    "src/rtc_field_trials.cc",
+    "src/rtc_field_trials_impl.h",
+    "src/rtc_frame_cryptor_impl.cc",
+    "src/rtc_frame_cryptor_impl.h",
+    "src/rtc_ice_candidate_impl.cc",
+    "src/rtc_ice_candidate_impl.h",
+    "src/rtc_media_stream_impl.cc",
+    "src/rtc_media_stream_impl.h",
+    "src/rtc_mediaconstraints_impl.cc",
+    "src/rtc_mediaconstraints_impl.h",
+    "src/rtc_peerconnection_factory_impl.cc",
+    "src/rtc_peerconnection_factory_impl.h",
+    "src/rtc_peerconnection_impl.cc",
+    "src/rtc_peerconnection_impl.h",
+    "src/rtc_rtp_capabilities_impl.cc",
+    "src/rtc_rtp_capabilities_impl.h",
+    "src/rtc_rtp_parameters_impl.cc",
+    "src/rtc_rtp_parameters_impl.h",
+    "src/rtc_rtp_receiver_impl.cc",
+    "src/rtc_rtp_receiver_impl.h",
+    "src/rtc_rtp_sender_impl.cc",
+    "src/rtc_rtp_sender_impl.h",
+    "src/rtc_rtp_transceiver_impl.cc",
+    "src/rtc_rtp_transceiver_impl.h",
+    "src/rtc_session_description_impl.cc",
+    "src/rtc_session_description_impl.h",
+    "src/rtc_video_device_impl.cc",
+    "src/rtc_video_device_impl.h",
+    "src/rtc_video_frame_impl.cc",
+    "src/rtc_video_frame_impl.h",
+    "src/rtc_video_sink_adapter.cc",
+    "src/rtc_video_sink_adapter.h",
+    "src/rtc_video_source_impl.cc",
+    "src/rtc_video_source_impl.h",
+    "src/rtc_video_track_impl.cc",
+    "src/rtc_video_track_impl.h",
+    "src/rtc_logging.cc",
+    "src/rtc_logging_impl.h",
+
+    # Discourse: shared NVENC screen share. The portable parts compile on
+    # every platform; only Windows gets a working pipeline.
+    "include/rtc_shared_screen.h",
+    "src/shared_encoder/h264_annexb.h",
+    "src/shared_encoder/keyframe_gate.h",
+    "src/shared_encoder/passthrough_core.h",
+    "src/shared_encoder/passthrough_video_encoder.cc",
+    "src/shared_encoder/passthrough_video_encoder.h",
+    "src/shared_encoder/rtc_shared_screen.cc",
+    "src/shared_encoder/shared_encoded_frame_buffer.h",
+    "src/shared_encoder/shared_encoder_factory.cc",
+    "src/shared_encoder/shared_encoder_factory.h",
+    "src/shared_encoder/shared_screen_pipeline.cc",
+    "src/shared_encoder/shared_screen_pipeline.h",
+    "src/shared_encoder/shared_screen_preset.h",
+    "src/shared_encoder/shared_screen_track_source.h",
+  ]
+
+  include_dirs += [
+    "src/shared_encoder",
+    "src/shared_encoder/third_party/nv-codec-headers",
+  ]
+
+  if (is_win) {
+    sources += [
+      "src/shared_encoder/d3d11_capture.cc",
+      "src/shared_encoder/d3d11_capture.h",
+      "src/shared_encoder/nvenc_h264_encoder.cc",
+      "src/shared_encoder/nvenc_h264_encoder.h",
+    ]
+    libs += [
+      "d3d11.lib",
+      "dxgi.lib",
+    ]
+  }
+
+  # intel media sdk
+  if (is_win && libwebrtc_intel_media_sdk) {
+    sources += [
+      "src/win/base_allocator.cc",
+      "src/win/base_allocator.h",
+      "src/win/codecutils.cc",
+      "src/win/codecutils.h",
+      "src/win/commontypes.h",
+      "src/win/d3d11_allocator.cc",
+      "src/win/d3d11_allocator.h",
+      "src/win/d3d11_manager.h",
+      "src/win/d3d_allocator.cc",
+      "src/win/d3d_allocator.h",
+      "src/win/d3dnativeframe.h",
+      "src/win/mediacapabilities.cc",
+      "src/win/mediacapabilities.h",
+      "src/win/mediautils.cc",
+      "src/win/mediautils.h",
+      "src/win/msdkcommon.h",
+      "src/win/msdkvideobase.cc",
+      "src/win/msdkvideobase.h",
+      "src/win/msdkvideodecoder.cc",
+      "src/win/msdkvideodecoder.h",
+      "src/win/msdkvideodecoderfactory.cc",
+      "src/win/msdkvideodecoderfactory.h",
+      "src/win/msdkvideoencoder.cc",
+      "src/win/msdkvideoencoder.h",
+      "src/win/msdkvideoencoderfactory.cc",
+      "src/win/msdkvideoencoderfactory.h",
+      "src/win/nativehandlebuffer.h",
+      "src/win/sysmem_allocator.cc",
+      "src/win/sysmem_allocator.h",
+    ]
+    include_dirs += [ "src/win/include" ]
+    defines += [ "USE_INTEL_MEDIA_SDK" ]
+    configs += [ "//build/config/win:windowed" ]
+    libs += [
+      "libmfx_vs2015.lib",
+      "dxgi.lib",
+      "d3d11.lib",
+    ]
+    lib_dirs = [ "src\win\lib\x64" ]
+    ldflags = [
+      "/ignore:4098",
+      "/ignore:4099",
+    ]
+  }
+
+  # WMF H.265 support (Windows without Intel Media SDK)
+  if (is_win && !libwebrtc_intel_media_sdk && rtc_use_h265) {
+    sources += [
+      "src/win/wmf_h265_encoder.cc",
+      "src/win/wmf_h265_encoder.h",
+      "src/win/wmf_h265_decoder.cc",
+      "src/win/wmf_h265_decoder.h",
+      "src/win/wmf_h265_factory.cc",
+      "src/win/wmf_h265_factory.h",
+    ]
+    libs += [
+      "mfplat.lib",
+      "mfuuid.lib",
+      "mf.lib",
+      "d3d11.lib",
+      "dxgi.lib",
+    ]
+  }
+
+  if (is_win && is_clang) {
+    cflags += [
+      "-Wno-microsoft-extra-qualification",
+      "-Wno-reorder",
+    ]
+  }
+
+  if (is_clang) {
+    # Suppress warnings from the Chromium Clang plugin (bugs.webrtc.org/163).
+    #suppressed_configs += [ "//build/config/clang:find_bad_constructs" ]
+
+    # Since m150 the unsafe-buffers clang plugin is enabled tree-wide (see
+    # //unsafe_buffers_paths.txt). The plugin re-raises the diagnostic as an
+    # error on its own, so -Wno-unsafe-buffer-usage alone is not enough; the
+    # config has to be dropped for this target.
+    suppressed_configs += [ "//build/config/clang:unsafe_buffers" ]
+    cflags += [ "-Wno-deprecated-declarations" ]
+  }
+
+  deps = [
+    "../api:create_peerconnection_factory",
+    "../api:field_trials",
+    "../api:libjingle_peerconnection_api",
+    "../api/audio_codecs:builtin_audio_decoder_factory",
+    "../api/audio_codecs:builtin_audio_encoder_factory",
+    "../api/crypto:frame_crypto_transformer",
+    "../api/video:video_frame",
+    "../api/video_codecs:builtin_video_decoder_factory",
+    "../api/video_codecs:builtin_video_encoder_factory",
+    "../common_video",
+    "../media:rtc_audio_video",
+    "../media:rtc_internal_video_codecs",
+    "../media:rtc_media",
+    "../media:rtc_media_base",
+    "../modules/audio_device:audio_device",
+    "../modules/audio_processing:api",
+    "../modules/audio_processing:audio_processing",
+    "../modules/video_capture:video_capture_module",
+    "../modules/video_coding:video_codec_interface",
+    "../pc:libjingle_peerconnection",
+    "../pc:video_track_source",
+    "../media:video_broadcaster",
+    "../rtc_base:threading",
+    "../sdk:media_constraints",
+    "//third_party/abseil-cpp/absl/memory",
+    "//third_party/boringssl:boringssl",
+    "//third_party/libyuv",
+  ]
+
+  # screen capture device
+  if (libwebrtc_desktop_capture) {
+    sources += [
+      "include/rtc_desktop_capturer.h",
+      "include/rtc_desktop_device.h",
+      "include/rtc_desktop_media_list.h",
+      "src/internal/desktop_capturer.h",
+      "src/internal/desktop_capturer.cc",
+      "src/internal/jpeg_util.cc",
+      "src/internal/jpeg_util.h",
+      "src/rtc_desktop_capturer_impl.cc",
+      "src/rtc_desktop_capturer_impl.h",
+      "src/rtc_desktop_device_impl.cc",
+      "src/rtc_desktop_device_impl.h",
+      "src/rtc_desktop_media_list_impl.cc",
+      "src/rtc_desktop_media_list_impl.h",
+    ]
+    deps += [
+      "../modules/desktop_capture",
+    ]
+    if (is_win) {
+      deps += [
+        "../rtc_base/win:get_activation_factory",
+        "../rtc_base/win:hstring",
+        "../rtc_base/win:scoped_com_initializer",
+      ]
+    }
+    if (is_linux) {
+      configs += [ ":gio" ]
+    }
+    if(is_mac || is_win || is_linux) {
+      deps += [
+        "//third_party/libjpeg_turbo:libjpeg",
+      ]
+    }
+  }
+}
+
+rtc_test("libwebrtc_cpp_api_unittests") {
+  testonly = true
+
+  sources = [
+     "test/field_trials.test.cc",
+     "test/peerconnection_factory.test.cc",
+     "test/video_processor.test.cc",
+  ]
+
+  if (is_clang) {
+    # See the comment in the "libwebrtc" target above.
+    suppressed_configs = [ "//build/config/clang:unsafe_buffers" ]
+    cflags = [ "-Wno-deprecated-declarations" ]
+  }
+
+   deps = [
+    ":libwebrtc",
+    "//testing/gtest",
+    "//test:test_support",
+    "//test:test_main",
+  ]
+}
+
+# Tests the real VideoEncoder adapter against this pinned libwebrtc API.
+# Deliberately builds the adapter into the executable rather than depending on
+# private (non-exported) C++ symbols from libwebrtc.dll.
+rtc_test("discourse_shared_encoder_unittests") {
+  testonly = true
+  include_dirs = [ ".", "src/shared_encoder" ]
+  sources = [
+    "test/shared_encoder.test.cc",
+    "src/shared_encoder/passthrough_video_encoder.cc",
+  ]
+  deps = [
+    "//api:scoped_refptr",
+    "//api:make_ref_counted",
+    "//api/video:encoded_image",
+    "//api/video:video_frame",
+    "//api/video:video_bitrate_allocation",
+    "//api/video_codecs:video_codecs_api",
+    "//modules/video_coding:video_codec_interface",
+    "//rtc_base:logging",
+    "//rtc_base:refcount",
+    "//testing/gtest",
+    "//test:test_main",
+    "//test:test_support",
+  ]
+  if (is_clang) {
+    suppressed_configs = [ "//build/config/clang:unsafe_buffers" ]
+    cflags = [ "-Wno-deprecated-declarations" ]
+  }
+}

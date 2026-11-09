@@ -50,6 +50,7 @@ import 'package:discourse_native/src/plugins/voice/voice_models.dart';
 import 'package:discourse_native/src/plugins/voice/voice_plugin.dart';
 import 'package:discourse_native/src/plugins/voice/voice_preferences.dart';
 import 'package:discourse_native/src/plugins/voice/voice_room_view.dart';
+import 'package:discourse_native/src/plugins/voice/voice_screen_share.dart';
 import 'package:discourse_native/src/plugins/voice/voice_services.dart';
 import 'package:discourse_native/src/plugins/voice/voice_settings.dart';
 import 'package:discourse_native/src/plugins/voice/voice_shell_service.dart';
@@ -1295,6 +1296,182 @@ void main() {
         },
       );
     }
+  });
+
+  group('hardware screen share', () {
+    final room = _room(
+      videoAllowed: true,
+      participants: const [
+        VoiceParticipant(id: 1, username: 'sam', role: VoiceRole.participant),
+        VoiceParticipant(id: 2, username: 'lee', role: VoiceRole.participant),
+        VoiceParticipant(id: 3, username: 'kim', role: VoiceRole.participant),
+      ],
+    );
+
+    testWidgets('asks for a quality and shows the upload it needs', (
+      tester,
+    ) async {
+      final harness = _Harness();
+      addTearDown(harness.dispose);
+      final media = harness.media.createSession()..hardwareEncoding = true;
+      await tester.pumpWidget(
+        _app(harness.controller, room: room, call: _call(room, media)),
+      );
+
+      await tester.tap(find.byTooltip('Share screen'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Screen share quality'), findsWidgets);
+      // 1080p60 at 16 Mbps to two viewers.
+      expect(find.text('Needs about 32 Mbps upload with 2 viewers'), findsOne);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.text('Screen share quality'), findsNothing);
+      expect(media.screenSharePreset, VoiceScreenSharePreset.defaultPreset);
+    });
+
+    testWidgets('keeps the chosen preset when sharing starts', (tester) async {
+      final harness = _Harness();
+      addTearDown(harness.dispose);
+      final media = harness.media.createSession()..hardwareEncoding = true;
+      await tester.pumpWidget(
+        _app(harness.controller, room: room, call: _call(room, media)),
+      );
+      await tester.tap(find.byTooltip('Share screen'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('1080p, 60 fps').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Half of your screen, 60 fps').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Needs about 50 Mbps upload with 2 viewers'), findsOne);
+
+      await tester.tap(find.text('Share screen').last);
+      await tester.pumpAndSettle();
+
+      expect(media.screenSharePreset, VoiceScreenSharePreset.halfSource60);
+      expect(find.text('Screen share quality'), findsNothing);
+    });
+
+    testWidgets('gives a shared screen the full width of a wide room', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final harness = _Harness();
+      addTearDown(harness.dispose);
+      final sharing = _room(
+        videoAllowed: true,
+        participants: const [
+          VoiceParticipant(id: 1, username: 'sam', role: VoiceRole.participant),
+          VoiceParticipant(
+            id: 2,
+            username: 'lee',
+            role: VoiceRole.participant,
+            screenSharing: true,
+          ),
+        ],
+      );
+      await tester.pumpWidget(
+        _app(
+          harness.controller,
+          room: sharing,
+          call: _call(sharing, harness.media.createSession()),
+        ),
+      );
+
+      final shared = tester.getRect(
+        find.byKey(const ValueKey(('voice-participant', 2))),
+      );
+      final other = tester.getRect(
+        find.byKey(const ValueKey(('voice-participant', 1))),
+      );
+      expect(shared.width, greaterThan(1200));
+      expect(other.top, greaterThanOrEqualTo(shared.bottom));
+    });
+
+    for (final (platform, available) in [
+      (TargetPlatform.windows, true),
+      (TargetPlatform.macOS, true),
+      (TargetPlatform.linux, true),
+      (TargetPlatform.android, false),
+      (TargetPlatform.iOS, false),
+    ]) {
+      testWidgets(
+        'share control on $platform is ${available ? '' : 'not '}shown',
+        (tester) async {
+          debugVoiceScreenSharePlatform = platform;
+          addTearDown(() => debugVoiceScreenSharePlatform = null);
+          final harness = _Harness();
+          addTearDown(harness.dispose);
+          await tester.pumpWidget(
+            _app(
+              harness.controller,
+              room: room,
+              call: _call(room, harness.media.createSession()),
+            ),
+          );
+
+          expect(
+            find.byTooltip('Share screen'),
+            available ? findsOneWidget : findsNothing,
+          );
+        },
+      );
+    }
+
+    testWidgets('skips the picker without a hardware encoder', (tester) async {
+      final harness = _Harness();
+      addTearDown(harness.dispose);
+      final media = harness.media.createSession();
+      await tester.pumpWidget(
+        _app(harness.controller, room: room, call: _call(room, media)),
+      );
+
+      await tester.tap(find.byTooltip('Share screen'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Screen share quality'), findsNothing);
+    });
+
+    testWidgets('shows a placeholder in place of the withheld preview', (
+      tester,
+    ) async {
+      final harness = _Harness();
+      addTearDown(harness.dispose);
+      final media = harness.media.createSession();
+      await tester.pumpWidget(
+        _app(harness.controller, room: room, call: _call(room, media)),
+      );
+      expect(find.text("You're sharing"), findsNothing);
+
+      media.setShareState(hidden: const {1});
+      await tester.pump();
+      expect(find.text("You're sharing"), findsOneWidget);
+
+      media.setShareState(hidden: const {});
+      await tester.pump();
+      expect(find.text("You're sharing"), findsNothing);
+    });
+
+    testWidgets('marks a viewer who cannot receive the share', (tester) async {
+      final harness = _Harness();
+      addTearDown(harness.dispose);
+      final media = harness.media.createSession();
+      await tester.pumpWidget(
+        _app(harness.controller, room: room, call: _call(room, media)),
+      );
+
+      media.setShareState(unsupported: const {2});
+      await tester.pump();
+      expect(find.text("Can't receive your screen share"), findsOneWidget);
+
+      media.setShareState(unsupported: const {});
+      await tester.pump();
+      expect(find.text("Can't receive your screen share"), findsNothing);
+    });
   });
 
   group('settings and preferences', () {
@@ -7028,7 +7205,8 @@ final class _MediaFactory implements VoiceMediaFactory {
   }) => createSession(join.transport);
 }
 
-final class _MediaSession extends ChangeNotifier implements VoiceMediaSession {
+final class _MediaSession extends ChangeNotifier
+    implements VoiceMediaSession, VoiceScreenShareEncoding {
   _MediaSession(this.transport, Set<int> speakingParticipantIds)
     : _speakingParticipantIds = Set.unmodifiable(speakingParticipantIds);
 
@@ -7137,6 +7315,26 @@ final class _MediaSession extends ChangeNotifier implements VoiceMediaSession {
 
   @override
   Future<void> setScreenShareEnabled(bool enabled) async {}
+
+  bool hardwareEncoding = false;
+  Set<int> previewHidden = const {};
+  Set<int> unsupportedPeers = const {};
+  @override
+  VoiceScreenSharePreset screenSharePreset =
+      VoiceScreenSharePreset.defaultPreset;
+  @override
+  Future<bool> hardwareEncodingAvailable() async => hardwareEncoding;
+  @override
+  bool screenSharePreviewHidden(int participantId) =>
+      previewHidden.contains(participantId);
+  @override
+  Set<int> get screenShareUnsupportedPeerIds => unsupportedPeers;
+  void setShareState({Set<int>? hidden, Set<int>? unsupported}) {
+    previewHidden = hidden ?? previewHidden;
+    unsupportedPeers = unsupported ?? unsupportedPeers;
+    notifyListeners();
+  }
+
   @override
   Future<void> syncParticipants(List<VoiceParticipant> participants) async {}
   @override

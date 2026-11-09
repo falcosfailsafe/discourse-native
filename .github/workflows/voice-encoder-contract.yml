@@ -1,0 +1,40 @@
+name: Voice encoder contracts
+on:
+  pull_request:
+    paths:
+      - 'tool/libwebrtc/**'
+      - 'packages/discourse_voice/third_party/flutter_webrtc/common/cpp/**'
+      - 'packages/discourse_voice/third_party/flutter_webrtc/third_party/**'
+      - '.github/workflows/voice-encoder-contract.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  policy-and-windows-api:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Windows cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake g++-mingw-w64-x86-64
+      - name: Release selection and cache contracts
+        run: python3 -m unittest discover -s tool/libwebrtc -p 'test_*.py' -v
+      - name: Encoder policy tests
+        run: bash tool/libwebrtc/run_native_tests.sh
+      - name: Compile GPU capture and encoder against Windows APIs
+        # This catches Windows API/type errors on PRs without fetching the
+        # multi-gigabyte WebRTC graph. The real MSVC fork build is still required.
+        shell: bash
+        run: |
+          set -euo pipefail
+          src=tool/libwebrtc/overlay/src/shared_encoder
+          mkdir -p build/voice-contract
+          for source in nvenc_h264_encoder.cc d3d11_capture.cc; do
+            x86_64-w64-mingw32-g++ -std=c++17 -Wall -Wextra -Werror \
+              -I "$src/third_party/nv-codec-headers" \
+              -c "$src/$source" -o "build/voice-contract/$source.o"
+          done

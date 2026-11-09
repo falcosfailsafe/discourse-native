@@ -91,6 +91,36 @@ Files:
 
 Commit: `b401810ff43d3e20fe4bc41ece6fee33722dd60f`.
 
+## Shared screen encoder bridge
+
+Voice shares a Windows screen through one NVENC session whose encoded frames
+every peer connection sends (docs/plans/voice-hardware-encoding.md). The Dart
+bridge adds `SharedScreenEncoder` with three native method-channel calls, none
+of which exists upstream. Each answers "unavailable" off Windows or when the
+native side lacks it, so callers keep ordinary capture.
+
+- `getSharedScreenEncoderCapabilities` returns `{available, codecs, maxWidth,
+  maxHeight, maxFrameRate, reason}`.
+- `getSharedScreenMedia` takes `{preset: {id, maxHeight | sourceScale,
+  frameRate, bitrate, keyframeIntervalSeconds, codec}, audio, sourceId?}` and returns the
+  `getDisplayMedia` shape `{streamId, audioTracks, videoTracks}`. It captures
+  the monitor named by the optional top-level `sourceId`, or the primary
+  monitor, without a picker, when it is absent or empty. Error code
+  `sharedScreenUnavailable` means the encoder cannot run and the caller may
+  fall back; any other error is final.
+- `setPeerBitrate` takes `{peerConnectionId, minBitrate, startBitrate,
+  maxBitrate}` in bits per second and returns `{result: true}`. It maps to
+  `PeerConnectionInterface::SetBitrate`; a negative start or maximum leaves
+  that value unchanged.
+
+Files:
+
+- `lib/flutter_webrtc.dart`
+- `lib/src/native/rtc_peerconnection_impl.dart`
+- `lib/src/native/shared_screen_encoder.dart`
+- `lib/src/web/shared_screen_encoder.dart`
+- `test/unit/shared_screen_encoder_test.dart`
+
 ## Provenance metadata
 
 The patch manifest itself is local review metadata and is not part of the
@@ -99,6 +129,60 @@ published archive.
 Files:
 
 - `PATCHES.md`
+
+## Windows plugin files
+
+The application has a Windows runner (`windows/` at the repository root) that
+builds this package's `windows/` plugin, the shared `common/cpp` sources and the
+`third_party/` libwebrtc download. Phase 0 built them as published; the shared
+screen encoder bridge below now patches some of them. Every Windows-built file
+is compared like any other vendored file, so each local change, including a
+`libwebrtc_version.ini` bump to our own build, must be listed under a Files
+heading before the check passes.
+`test/vendor_provenance_contract_test.dart` pins that those files are part of
+the compared tree and that the Windows build manifest is inventoried.
+
+## Shared screen encoder bridge (native)
+
+Windows shared NVENC screen share needs the plugin to start a screen share whose
+frames are encoded once, and to set per-connection bandwidth estimation limits.
+`common/cpp/src/flutter_shared_screen.cc` handles
+`getSharedScreenEncoderCapabilities`, `getSharedScreenMedia` and
+`setPeerBitrate`. It looks up `extern "C"` exports of our own
+libwebrtc build (`rtc_shared_screen.h`) with `GetProcAddress`, so the plugin
+still loads against a stock `libwebrtc.dll` and then reports the encoder as
+unavailable. `FlutterWebRTCBase` befriends the new class so it can register
+tracks like `FlutterScreenCapture` does. The calls run synchronously on the
+platform thread (no background work that could outlive the plugin).
+`FlutterWebRTCBase` also gains a `local_track_removed_` callback, fired when a
+local track or stream is disposed, so the shared stream's loopback audio stops
+with its track.
+
+Files:
+
+- `common/cpp/include/flutter_shared_screen.h`
+- `common/cpp/src/flutter_shared_screen.cc`
+- `common/cpp/src/flutter_media_stream.cc`
+- `common/cpp/include/flutter_webrtc.h`
+- `windows/CMakeLists.txt`
+- `linux/CMakeLists.txt`
+- `elinux/CMakeLists.txt`
+
+## Pinned Windows release selection
+
+The download CMake supports separate Windows x64 release URL, version and
+SHA-256 keys without moving Linux or other architectures off their stock
+release. Custom Windows selection requires all three values. Downloads are
+verified before promotion, cached by release version and extracted with an
+origin/version stamp, so changing a release cannot silently reuse stale DLLs.
+The custom Windows wrapper fork is
+<https://github.com/falcosfailsafe/libwebrtc>. The source build recipe and
+overlay are reviewed in `tool/libwebrtc` in the application repository; see
+its README for immutable source pins, release and hardware gates.
+
+Files:
+
+- `third_party/CMakeLists.txt`
 
 ## Verifying the review diff
 

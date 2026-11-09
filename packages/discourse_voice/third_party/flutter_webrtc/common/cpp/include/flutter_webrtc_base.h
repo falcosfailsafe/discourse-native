@@ -4,6 +4,7 @@
 #include "flutter_common.h"
 
 #include <string.h>
+#include <functional>
 #include <list>
 #include <map>
 #include <memory>
@@ -42,6 +43,7 @@ class FlutterWebRTCBase {
   friend class FlutterDataChannel;
   friend class FlutterPeerConnectionObserver;
   friend class FlutterScreenCapture;
+  friend class FlutterSharedScreen;
   friend class FlutterFrameCryptor;
   friend class FlutterDataPacketCryptor;
   enum ParseConstraintType { kMandatory, kOptional };
@@ -144,6 +146,12 @@ class FlutterWebRTCBase {
   bool CreateIceServers(const EncodableList& iceServersArray,
                         IceServer* ice_servers);
 
+  // Called with the track id whenever a local track is forgotten (track or
+  // stream dispose). Lets the shared screen share stop its loopback audio.
+  void NotifyLocalTrackRemoved(const std::string& track_id) {
+    if (local_track_removed_) local_track_removed_(track_id);
+  }
+
   // Detaches the processors of a local video track and forgets its source.
   void RemoveVideoSourceForId(const std::string& track_id);
 
@@ -184,6 +192,7 @@ class FlutterWebRTCBase {
  protected:
   BinaryMessenger* messenger_;
   TaskRunner* task_runner_;
+  std::function<void(const std::string&)> local_track_removed_;
   TextureRegistrar* textures_;
   std::unique_ptr<EventChannelProxy> event_channel_;
 };

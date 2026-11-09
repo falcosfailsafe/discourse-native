@@ -4164,6 +4164,38 @@
   "@shareScreen": {
     "description": "English UI message used by plugins/voice/voice_room_view.dart. Keep placeholders intact."
   },
+  "screenShareQuality": "Screen share quality",
+  "@screenShareQuality": {
+    "description": "Voice screen share picker title and field label for the video quality preset."
+  },
+  "screenSharePreset720p60": "720p, 60 fps",
+  "@screenSharePreset720p60": {
+    "description": "Voice screen share quality preset: 720p at 60 frames per second."
+  },
+  "screenSharePreset1080p60": "1080p, 60 fps",
+  "@screenSharePreset1080p60": {
+    "description": "Voice screen share quality preset: 1080p at 60 frames per second."
+  },
+  "screenSharePresetHalfSource60": "Half of your screen, 60 fps",
+  "@screenSharePresetHalfSource60": {
+    "description": "Voice screen share quality preset: each dimension of the shared screen halved, at 60 frames per second."
+  },
+  "screenShareUploadEstimate": "Needs about {mbps} Mbps upload with {viewers, plural, =1{1 viewer} other{{viewers} viewers}}",
+  "@screenShareUploadEstimate": {
+    "description": "Voice screen share picker: the upload speed the chosen quality needs, in megabits per second, for the number of people watching.",
+    "placeholders": {
+      "mbps": {"type": "int"},
+      "viewers": {"type": "int"}
+    }
+  },
+  "youAreSharing": "You''re sharing",
+  "@youAreSharing": {
+    "description": "Voice call tile shown in place of your own preview while your screen is shared without a preview."
+  },
+  "screenShareUnsupportedViewer": "Can''t receive your screen share",
+  "@screenShareUnsupportedViewer": {
+    "description": "Voice call tile note on a viewer whose app cannot decode the video format of your screen share."
+  },
   "raiseHand": "Raise hand",
   "@raiseHand": {
     "description": "English UI message used by plugins/voice/voice_room_view.dart. Keep placeholders intact."

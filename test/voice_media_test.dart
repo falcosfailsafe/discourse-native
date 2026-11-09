@@ -7,6 +7,7 @@ import 'package:discourse_native/src/plugins/voice/voice_livekit_endpoint.dart';
 import 'package:discourse_native/src/plugins/voice/voice_media.dart';
 import 'package:discourse_native/src/plugins/voice/voice_models.dart';
 import 'package:discourse_native/src/plugins/voice/voice_reconnect.dart';
+import 'package:discourse_native/src/plugins/voice/voice_screen_share.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:livekit_client/livekit_client.dart' as lk;
@@ -29,6 +30,8 @@ VoiceJoinResponse join({
 );
 
 void main() {
+  _sharedScreenEncodingTests();
+
   test('stage listeners do not acquire an outgoing audio publication', () {
     final media = const NativeVoiceMediaFactory().create(
       join: join(roomType: VoiceRoomType.stage, role: VoiceRole.participant),
@@ -4033,6 +4036,11 @@ MeshVoiceMediaSession _meshSession({
   String remoteUsername = 'remote',
   VoiceUserMediaGetter? getUserMedia,
   VoiceUserMediaGetter? getDisplayMedia,
+  VoiceSharedScreenCapabilitiesGetter? getSharedScreenCapabilities,
+  VoiceSharedScreenMediaGetter? getSharedScreenMedia,
+  VoiceSenderCapabilitiesGetter? getSenderCapabilities,
+  VoicePeerBitrateSetter? setPeerBitrate,
+  VoicePeerConnectionCreator? createPeerConnection,
 
   VoiceMediaDeviceEnumerator? enumerateDevices,
   VoiceSignalSender? sendSignal,
@@ -4048,9 +4056,24 @@ MeshVoiceMediaSession _meshSession({
   sendSignal: sendSignal ?? ((_, _) async {}),
   audioPublishingAllowed: audioPublishingAllowed,
 
-  createPeerConnection: (_) async => peer,
+  createPeerConnection: createPeerConnection ?? (_) async => peer,
   getUserMedia: getUserMedia,
   getDisplayMedia: getDisplayMedia,
+  setPeerBitrate:
+      setPeerBitrate ??
+      (
+        peer, {
+        required minBitrate,
+        required startBitrate,
+        required maxBitrate,
+      }) async {},
+  // Without a stub the platform has no shared encoder, as on every machine
+  // that is not an NVENC Windows PC.
+  getSharedScreenCapabilities:
+      getSharedScreenCapabilities ??
+      (() async => rtc.SharedScreenEncoderCapabilities.unavailable),
+  getSharedScreenMedia: getSharedScreenMedia,
+  getSenderCapabilities: getSenderCapabilities,
   enumerateDevices: enumerateDevices,
   setTrackVolume: setTrackVolume,
 );
@@ -4138,7 +4161,11 @@ final class _FakePeerConnection implements rtc.RTCPeerConnection {
     this.failDispose = false,
     this.onAddTransceiver,
     this.exposeNullCachedSignalingState = false,
+    this.videoCodecs,
   }) : events = events ?? <String>[];
+
+  /// What this peer's video sender reports as negotiated.
+  final List<rtc.RTCRTPCodec>? videoCodecs;
 
   final List<String> events;
   final bool failClose;
@@ -4209,6 +4236,7 @@ final class _FakePeerConnection implements rtc.RTCPeerConnection {
     mediaPlan.add('transceiver:$mediaKind');
     final label = mediaKind == 'video' ? 'video' : 'screen-audio';
     final sender = _FakeSender(label, track, events);
+    if (mediaKind == 'video') sender.negotiatedCodecs = videoCodecs;
     final transceiver = _FakeTransceiver(
       mid: '',
       sender: sender,
@@ -4692,6 +4720,14 @@ final class _FakeTransceiver implements rtc.RTCRtpTransceiver {
   @override
   final _FakeReceiver receiver;
   rtc.TransceiverDirection direction;
+  final List<List<rtc.RTCRtpCodecCapability>> codecPreferences = [];
+
+  @override
+  Future<void> setCodecPreferences(
+    List<rtc.RTCRtpCodecCapability> codecs,
+  ) async {
+    codecPreferences.add(List.of(codecs));
+  }
 
   @override
   Future<void> setDirection(rtc.TransceiverDirection value) async {
@@ -4722,8 +4758,10 @@ final class _FakeSender implements rtc.RTCRtpSender {
   rtc.MediaStreamTrack? get track => _track;
 
   @override
-  rtc.RTCRtpParameters get parameters =>
-      rtc.RTCRtpParameters(encodings: [rtc.RTCRtpEncoding()]);
+  rtc.RTCRtpParameters get parameters => rtc.RTCRtpParameters(
+    encodings: [rtc.RTCRtpEncoding()],
+    codecs: negotiatedCodecs,
+  );
 
   @override
   Future<void> replaceTrack(rtc.MediaStreamTrack? value) async {
@@ -4732,8 +4770,15 @@ final class _FakeSender implements rtc.RTCRtpSender {
     _track = value;
   }
 
+  final List<rtc.RTCRtpParameters> appliedParameters = [];
+  List<rtc.RTCRTPCodec>? negotiatedCodecs;
+  bool setParametersResult = true;
+
   @override
-  Future<bool> setParameters(rtc.RTCRtpParameters parameters) async => true;
+  Future<bool> setParameters(rtc.RTCRtpParameters parameters) async {
+    appliedParameters.add(parameters);
+    return setParametersResult;
+  }
 
   @override
   Future<void> setStreams(List<rtc.MediaStream> value) async {
@@ -4964,4 +5009,682 @@ final class _ManualPeriodicTimer implements Timer {
 
   @override
   int get tick => _tick;
+}
+
+rtc.RTCRtpCodecCapability _h264(String profileLevelId, {String mode = '1'}) =>
+    rtc.RTCRtpCodecCapability(
+      mimeType: 'video/H264',
+      clockRate: 90000,
+      sdpFmtpLine:
+          'level-asymmetry-allowed=1;packetization-mode=$mode;'
+          'profile-level-id=$profileLevelId',
+    );
+
+rtc.RTCRtpCodecCapability _codec(String mimeType, [String? fmtp]) =>
+    rtc.RTCRtpCodecCapability(
+      mimeType: mimeType,
+      clockRate: 90000,
+      sdpFmtpLine: fmtp,
+    );
+
+/// A negotiated send codec as the native sender reports it.
+rtc.RTCRTPCodec _negotiated(
+  String name, {
+  String? profileLevelId,
+  String mode = '1',
+}) => rtc.RTCRTPCodec(
+  payloadType: 102,
+  name: name,
+  kind: 'video',
+  clockRate: 90000,
+  parameters: {
+    if (profileLevelId != null) ...{
+      'level-asymmetry-allowed': '1',
+      'packetization-mode': mode,
+      'profile-level-id': profileLevelId,
+    },
+  },
+);
+
+final _highH264 = [
+  _negotiated('H264', profileLevelId: '640034'),
+  _negotiated('rtx'),
+];
+
+final _nvencCapabilities = rtc.SharedScreenEncoderCapabilities.fromMap({
+  'available': true,
+  'codecs': ['H264'],
+});
+
+typedef _BitrateCall = ({
+  rtc.RTCPeerConnection peer,
+  int min,
+  int start,
+  int max,
+});
+
+void _sharedScreenEncodingTests() {
+  group('shared hardware screen share', () {
+    final senderCodecs = [
+      _codec('video/VP8'),
+      _h264('42e01f'),
+      _h264('640033'),
+      _h264('640034'),
+      _h264('640034', mode: '0'),
+      _codec('video/rtx', 'apt=96'),
+    ];
+
+    Future<
+      ({
+        MeshVoiceMediaSession media,
+        _FakePeerConnection peer,
+        List<Map<String, dynamic>> sharedRequests,
+        List<int> displayRequests,
+        List<_BitrateCall> bitrates,
+      })
+    >
+    start({
+      Future<rtc.SharedScreenEncoderCapabilities> Function()? capabilities,
+      Future<rtc.MediaStream> Function(rtc.SharedScreenEncoderPreset)? shared,
+      List<rtc.RTCRTPCodec>? negotiated,
+      bool noCodecInfo = false,
+      List<rtc.RTCRtpCodecCapability>? sender,
+      Future<void> Function(_BitrateCall)? onBitrate,
+    }) async {
+      final peer = _FakePeerConnection(
+        videoCodecs: noCodecInfo ? null : negotiated ?? _highH264,
+      );
+      final sharedRequests = <Map<String, dynamic>>[];
+      final displayRequests = <int>[];
+      final bitrates = <_BitrateCall>[];
+      final media = _meshSession(
+        peer: peer,
+        audioPublishingAllowed: false,
+        getSharedScreenCapabilities:
+            capabilities ?? () async => _nvencCapabilities,
+        getSharedScreenMedia: (preset) {
+          sharedRequests.add(preset.toMap());
+          return (shared ??
+              (_) async => _FakeStream('shared-screen', [
+                _FakeTrack('shared-video', 'video'),
+                _FakeTrack('shared-audio', 'audio'),
+              ]))(preset);
+        },
+        getSenderCapabilities: (kind) async {
+          expect(kind, 'video');
+          return rtc.RTCRtpCapabilities(codecs: sender ?? senderCodecs);
+        },
+        setPeerBitrate:
+            (
+              peer, {
+              required minBitrate,
+              required startBitrate,
+              required maxBitrate,
+            }) async {
+              final call = (
+                peer: peer,
+                min: minBitrate,
+                start: startBitrate,
+                max: maxBitrate,
+              );
+              bitrates.add(call);
+              await onBitrate?.call(call);
+            },
+        getDisplayMedia: (_) async {
+          displayRequests.add(displayRequests.length);
+          return _FakeStream('screen-stream', [
+            _FakeTrack('screen-video', 'video'),
+            _FakeTrack('screen-audio', 'audio'),
+          ]);
+        },
+      );
+      addTearDown(media.dispose);
+      await media.connect();
+      return (
+        media: media,
+        peer: peer,
+        sharedRequests: sharedRequests,
+        displayRequests: displayRequests,
+        bitrates: bitrates,
+      );
+    }
+
+    test('captures through the encoder with the sender preset', () async {
+      final t = await start();
+
+      await t.media.setScreenShareEnabled(true);
+
+      expect(t.displayRequests, isEmpty);
+      expect(t.sharedRequests, [
+        {
+          'id': '1080p60',
+          'maxHeight': 1080,
+          'frameRate': 60,
+          'bitrate': 16000000,
+          'keyframeIntervalSeconds': 3,
+          'codec': 'H264',
+        },
+      ]);
+      expect(t.peer.createdTransceivers[1].sender.track?.id, 'shared-video');
+      expect(t.peer.createdTransceivers[2].sender.track?.id, 'shared-audio');
+      expect(t.media.screenSharing, isTrue);
+      expect(t.media.screenShareUnsupportedPeerIds, isEmpty);
+    });
+
+    test('sends the chosen preset to the encoder and the limits', () async {
+      final t = await start();
+      t.media.screenSharePreset = VoiceScreenSharePreset.halfSource60;
+
+      await t.media.setScreenShareEnabled(true);
+
+      expect(t.sharedRequests.single, {
+        'id': 'half60',
+        'sourceScale': 0.5,
+        'frameRate': 60,
+        'bitrate': 25000000,
+        'keyframeIntervalSeconds': 3,
+        'codec': 'H264',
+      });
+      expect(t.bitrates.single.start, 25000000);
+      expect(
+        t
+            .peer
+            .createdTransceivers[1]
+            .sender
+            .appliedParameters
+            .single
+            .encodings!
+            .single
+            .maxBitrate,
+        25000000,
+      );
+    });
+
+    test('fixes the sender and raises the bandwidth estimate', () async {
+      final t = await start();
+
+      await t.media.setScreenShareEnabled(true);
+
+      final applied = t.peer.createdTransceivers[1].sender.appliedParameters;
+      expect(applied, hasLength(1));
+      final encoding = applied.single.encodings!.single;
+      expect(encoding.maxBitrate, 16000000);
+      expect(encoding.maxFramerate, 60);
+      expect(encoding.scaleResolutionDownBy, 1.0);
+      expect(
+        applied.single.degradationPreference,
+        rtc.RTCDegradationPreference.MAINTAIN_RESOLUTION,
+      );
+      final call = t.bitrates.single;
+      expect(call.peer, same(t.peer));
+      expect((call.min, call.start, call.max), (16000000, 16000000, 16000000));
+    });
+
+    test('withholds the local preview and reports why', () async {
+      final t = await start();
+      expect(t.media.screenSharePreviewHidden(10), isFalse);
+
+      await t.media.setScreenShareEnabled(true);
+
+      expect(t.media.localVideoTrack, isNull);
+      expect(t.media.videoTrackFor(10), isNull);
+      expect(t.media.screenSharePreviewHidden(10), isTrue);
+      expect(t.media.screenSharePreviewHidden(20), isFalse);
+    });
+
+    test('releases the sender, the estimate and the placeholder', () async {
+      final t = await start();
+      await t.media.setScreenShareEnabled(true);
+      final track = t.peer.createdTransceivers[1].sender.track as _FakeTrack;
+
+      await t.media.setScreenShareEnabled(false);
+
+      expect(t.media.screenSharePreviewHidden(10), isFalse);
+      expect(t.media.screenSharing, isFalse);
+      final video = t.peer.createdTransceivers[1].sender;
+      expect(video.track, isNull);
+      final released = video.appliedParameters.last.encodings!.single;
+      expect(released.maxBitrate, isNull);
+      expect(released.maxFramerate, isNull);
+      expect(
+        video.appliedParameters.last.degradationPreference,
+        rtc.RTCDegradationPreference.BALANCED,
+      );
+      final call = t.bitrates.last;
+      expect((call.min, call.start, call.max), (0, -1, -1));
+      expect(track.stopped, isTrue);
+    });
+
+    group('a peer that cannot take the stream', () {
+      for (final (label, codecs) in <(String, List<rtc.RTCRTPCodec>?)>[
+        ('negotiated VP8', [_negotiated('VP8')]),
+        (
+          'negotiated constrained baseline',
+          [_negotiated('H264', profileLevelId: '42e01f')],
+        ),
+        (
+          'negotiated High 5.0',
+          [_negotiated('H264', profileLevelId: '640032')],
+        ),
+        (
+          'negotiated packetization mode 0',
+          [_negotiated('H264', profileLevelId: '640034', mode: '0')],
+        ),
+        ('negotiated no codec', <rtc.RTCRTPCodec>[]),
+        ('reported no codec information', null),
+      ]) {
+        test('gets no video when it $label', () async {
+          final t = await start(
+            negotiated: codecs,
+            noCodecInfo: codecs == null,
+          );
+
+          await t.media.setScreenShareEnabled(true);
+
+          expect(t.peer.createdTransceivers[1].sender.track, isNull);
+          expect(t.media.screenShareUnsupportedPeerIds, {20});
+          expect(t.bitrates, isEmpty);
+          expect(t.media.screenSharing, isTrue);
+          // The audio still reaches it.
+          expect(
+            t.peer.createdTransceivers[2].sender.track?.id,
+            'shared-audio',
+          );
+
+          await t.media.setScreenShareEnabled(false);
+          expect(t.media.screenShareUnsupportedPeerIds, isEmpty);
+        });
+      }
+
+      test('gets no video when the sender limits are refused', () async {
+        final t = await start();
+        t.peer.createdTransceivers[1].sender.setParametersResult = false;
+
+        await t.media.setScreenShareEnabled(true);
+
+        expect(t.peer.createdTransceivers[1].sender.track, isNull);
+        expect(t.media.screenShareUnsupportedPeerIds, {20});
+      });
+
+      test('gets no video when the estimate cannot be raised', () async {
+        final t = await start(
+          onBitrate: (_) async => throw StateError('no native API'),
+        );
+
+        await t.media.setScreenShareEnabled(true);
+
+        expect(t.peer.createdTransceivers[1].sender.track, isNull);
+        expect(t.media.screenShareUnsupportedPeerIds, {20});
+      });
+
+      test('is detached when the stream cannot be attached', () async {
+        final t = await start();
+        final video = t.peer.createdTransceivers[1].sender;
+        video.onReplaceTrack = (track) async {
+          if (track?.id == 'shared-video') throw StateError('replace failed');
+        };
+
+        await t.media.setScreenShareEnabled(true);
+
+        expect(video.track, isNull);
+        expect(t.media.screenShareUnsupportedPeerIds, {20});
+      });
+    });
+
+    group('a peer that joins after sharing started', () {
+      Future<({MeshVoiceMediaSession media, _FakePeerConnection joiner})>
+      joined(List<rtc.RTCRTPCodec>? negotiated) async {
+        final first = _FakePeerConnection(videoCodecs: _highH264);
+        final joiner = _FakePeerConnection(videoCodecs: negotiated);
+        var created = 0;
+        final media = _meshSession(
+          peer: first,
+          audioPublishingAllowed: false,
+          createPeerConnection: (_) async => created++ == 0 ? first : joiner,
+          getSharedScreenCapabilities: () async => _nvencCapabilities,
+          getSharedScreenMedia: (_) async => _FakeStream('shared-screen', [
+            _FakeTrack('shared-video', 'video'),
+          ]),
+          getSenderCapabilities: (_) async =>
+              rtc.RTCRtpCapabilities(codecs: senderCodecs),
+        );
+        addTearDown(media.dispose);
+        await media.connect();
+        await media.setScreenShareEnabled(true);
+        await media.syncParticipants([
+          ...media.join.room.participants,
+          _meshJoiner,
+        ]);
+        return (media: media, joiner: joiner);
+      }
+
+      test('receives the stream only once H.264 High is negotiated', () async {
+        final t = await joined(_highH264);
+        final video = t.joiner.createdTransceivers[1].sender;
+        expect(video.track, isNull, reason: 'codec not yet negotiated');
+        expect(video.appliedParameters, isEmpty);
+
+        await t.media.handleSignal(30, {'type': 'answer', 'sdp': 'answer'});
+
+        expect(video.track?.id, 'shared-video');
+        expect(
+          video.appliedParameters.last.encodings!.single.maxBitrate,
+          16000000,
+        );
+        expect(t.media.screenShareUnsupportedPeerIds, isEmpty);
+      });
+
+      test('gets nothing when the answer settles on another codec', () async {
+        final t = await joined([_negotiated('VP8')]);
+
+        await t.media.handleSignal(30, {'type': 'answer', 'sdp': 'answer'});
+
+        expect(t.joiner.createdTransceivers[1].sender.track, isNull);
+        expect(t.media.screenShareUnsupportedPeerIds, {30});
+        expect(
+          t.media.videoTrackFor(10),
+          isNull,
+          reason: 'the sender still shows its placeholder',
+        );
+      });
+
+      test('is forgotten when it leaves', () async {
+        final t = await joined([_negotiated('VP8')]);
+        await t.media.handleSignal(30, {'type': 'answer', 'sdp': 'answer'});
+        expect(t.media.screenShareUnsupportedPeerIds, {30});
+
+        await t.media.syncParticipants(t.media.join.room.participants);
+
+        expect(t.media.screenShareUnsupportedPeerIds, isEmpty);
+      });
+    });
+
+    group('codec preferences', () {
+      test('prefer H.264 High 5.2 then 5.1 before other codecs', () async {
+        final t = await start();
+
+        final video = t.peer.createdTransceivers[1];
+        expect(video.codecPreferences, hasLength(1));
+        expect(
+          video.codecPreferences.single.map(
+            (codec) =>
+                '${codec.mimeType} ${codec.sdpFmtpLine?.split(';').last ?? ''}',
+          ),
+          [
+            'video/H264 profile-level-id=640034',
+            'video/H264 profile-level-id=640033',
+            'video/VP8 ',
+            'video/H264 profile-level-id=42e01f',
+            'video/H264 profile-level-id=640034',
+            'video/rtx apt=96',
+          ],
+        );
+        // Only the video transceiver is steered.
+        expect(t.peer.createdTransceivers[0].codecPreferences, isEmpty);
+        expect(t.peer.createdTransceivers[2].codecPreferences, isEmpty);
+      });
+
+      test('are set on the offered video transceiver when answering', () async {
+        final peer = _FakePeerConnection();
+        final media = _meshSession(
+          peer: peer,
+          localUserId: 20,
+          remoteUserId: 10,
+          audioPublishingAllowed: false,
+          getSharedScreenCapabilities: () async => _nvencCapabilities,
+          getSenderCapabilities: (_) async =>
+              rtc.RTCRtpCapabilities(codecs: senderCodecs),
+        );
+        addTearDown(media.dispose);
+        await media.connect();
+        final associated = peer.prepareAssociatedTransceivers();
+
+        await media.handleSignal(10, {'type': 'offer', 'sdp': 'remote-offer'});
+
+        expect(associated[1].codecPreferences, hasLength(1));
+        expect(
+          associated[1].codecPreferences.single.first.sdpFmtpLine,
+          contains('profile-level-id=640034'),
+        );
+        expect(associated[0].codecPreferences, isEmpty);
+        expect(peer.createdAnswers, 1);
+      });
+
+      test('a failing capability query keeps today\'s screen share', () async {
+        final peer = _FakePeerConnection(videoCodecs: [_negotiated('VP8')]);
+        final media = _meshSession(
+          peer: peer,
+          audioPublishingAllowed: false,
+          getSharedScreenCapabilities: () async => _nvencCapabilities,
+          getSharedScreenMedia: (_) async =>
+              throw StateError('the encoder must not be used'),
+          getSenderCapabilities: (_) async => throw StateError('no caps'),
+          getDisplayMedia: (_) async => _FakeStream('screen-stream', [
+            _FakeTrack('screen-video', 'video'),
+          ]),
+        );
+        addTearDown(media.dispose);
+        await media.connect();
+
+        expect(await media.hardwareEncodingAvailable(), isFalse);
+        await media.setScreenShareEnabled(true);
+
+        expect(
+          peer.createdTransceivers.expand((t) => t.codecPreferences),
+          <rtc.RTCRtpCodecCapability>[],
+        );
+        expect(peer.createdTransceivers[1].sender.track?.id, 'screen-video');
+        expect(media.screenShareUnsupportedPeerIds, isEmpty);
+      });
+    });
+
+    group('without a usable encoder', () {
+      for (final (label, capabilities, sender)
+          in <
+            (
+              String,
+              Future<rtc.SharedScreenEncoderCapabilities> Function(),
+              List<rtc.RTCRtpCodecCapability>?,
+            )
+          >[
+            (
+              'the platform reports none',
+              () async => rtc.SharedScreenEncoderCapabilities.unavailable,
+              null,
+            ),
+            (
+              'the capability query fails',
+              () async => throw StateError('driver missing'),
+              null,
+            ),
+            (
+              'H.264 is not offered',
+              () async => rtc.SharedScreenEncoderCapabilities.fromMap({
+                'available': true,
+                'codecs': ['AV1'],
+              }),
+              null,
+            ),
+            (
+              'the build cannot negotiate H.264 High 5.1',
+              () async => _nvencCapabilities,
+              [_codec('video/VP8'), _h264('42e01f'), _h264('64001f')],
+            ),
+          ]) {
+        test('keeps today\'s path when $label', () async {
+          final t = await start(capabilities: capabilities, sender: sender);
+
+          expect(await t.media.hardwareEncodingAvailable(), isFalse);
+          await t.media.setScreenShareEnabled(true);
+
+          expect(t.sharedRequests, isEmpty);
+          expect(t.displayRequests, hasLength(1));
+          expect(
+            t.peer.createdTransceivers[1].sender.track?.id,
+            'screen-video',
+          );
+          expect(
+            t.peer.createdTransceivers[1].sender.appliedParameters,
+            isEmpty,
+          );
+          expect(t.bitrates, isEmpty);
+          expect(t.media.screenShareUnsupportedPeerIds, isEmpty);
+          expect(t.media.localVideoTrack, isNotNull);
+          expect(t.media.screenSharePreviewHidden(10), isFalse);
+        });
+      }
+
+      test('does not invent capabilities the platform left out', () {
+        expect(
+          rtc.SharedScreenEncoderCapabilities.fromMap({'available': true}),
+          isA<rtc.SharedScreenEncoderCapabilities>().having(
+            (c) => c.available,
+            'available',
+            isFalse,
+          ),
+        );
+        expect(
+          rtc.SharedScreenEncoderCapabilities.fromMap({
+            'available': false,
+            'codecs': ['H264'],
+            'reason': 'no NVENC',
+          }),
+          isA<rtc.SharedScreenEncoderCapabilities>()
+              .having((c) => c.available, 'available', isFalse)
+              .having((c) => c.reason, 'reason', 'no NVENC'),
+        );
+      });
+
+      test('the real bridge reports none off Windows', () async {
+        expect(
+          (await rtc.SharedScreenEncoder.capabilities()).available,
+          isFalse,
+        );
+      });
+    });
+
+    test('falls back once when the encoder fails to open', () async {
+      var attempts = 0;
+      final t = await start(
+        shared: (_) async {
+          attempts++;
+          throw const rtc.SharedScreenEncoderUnavailable('session failed');
+        },
+      );
+
+      await t.media.setScreenShareEnabled(true);
+
+      expect(attempts, 1);
+      expect(t.displayRequests, hasLength(1));
+      expect(t.peer.createdTransceivers[1].sender.track?.id, 'screen-video');
+      expect(t.media.screenSharePreviewHidden(10), isFalse);
+      expect(await t.media.hardwareEncodingAvailable(), isFalse);
+
+      await t.media.setScreenShareEnabled(false);
+      await t.media.setScreenShareEnabled(true);
+      expect(attempts, 1, reason: 'a broken encoder is not retried');
+      expect(t.displayRequests, hasLength(2));
+    });
+
+    test('does not prompt again after a cancelled or failed capture', () async {
+      final cancelled = StateError('cancelled');
+      final t = await start(shared: (_) async => throw cancelled);
+
+      await expectLater(
+        t.media.setScreenShareEnabled(true),
+        throwsA(same(cancelled)),
+      );
+
+      expect(t.displayRequests, isEmpty);
+      expect(t.media.screenSharing, isFalse);
+      expect(t.peer.createdTransceivers[1].sender.track, isNull);
+    });
+
+    test('releases everything when the capture ends', () async {
+      final shared = _FakeTrack('shared-video', 'video');
+      final t = await start(
+        shared: (_) async => _FakeStream('shared-screen', [shared]),
+      );
+      await t.media.setScreenShareEnabled(true);
+
+      shared.onEnded!();
+      await _pumpEventQueue();
+      await _pumpEventQueue();
+
+      expect(t.media.screenSharing, isFalse);
+      expect(t.media.screenSharePreviewHidden(10), isFalse);
+      final released = t
+          .peer
+          .createdTransceivers[1]
+          .sender
+          .appliedParameters
+          .last
+          .encodings!
+          .single;
+      expect(released.maxBitrate, isNull);
+      expect(t.bitrates.last.min, 0);
+    });
+  });
+
+  group('screen share presets', () {
+    test('estimate the upload as one copy per viewer, rounded up', () {
+      expect(VoiceScreenSharePreset.halfSource60.uploadMbps(3), 75);
+      expect(VoiceScreenSharePreset.halfSource60.uploadMbps(6), 150);
+      expect(VoiceScreenSharePreset.p1080x60.uploadMbps(2), 32);
+      expect(VoiceScreenSharePreset.p720x60.uploadMbps(1), 10);
+    });
+
+    test('count at least one viewer', () {
+      expect(VoiceScreenSharePreset.p720x60.uploadMbps(0), 10);
+    });
+
+    test('carry exactly one sizing rule and a constant rate', () {
+      for (final preset in VoiceScreenSharePreset.values) {
+        expect(
+          (preset.maxHeight == null) != (preset.sourceScale == null),
+          isTrue,
+          reason: preset.id,
+        );
+        expect(preset.toEncoderPreset().bitrate, preset.bitrate);
+        expect(preset.toEncoderPreset().codec, 'H264');
+      }
+      expect({
+        for (final p in VoiceScreenSharePreset.values) p.id,
+      }, hasLength(3));
+    });
+  });
+
+  group('screenShareCodecPreferences', () {
+    test('needs High profile at level 5.1 or above with packetization 1', () {
+      for (final unsuitable in [
+        _h264('640032'),
+        _h264('42e033'),
+        _h264('4d0033'),
+        _h264('640033', mode: '0'),
+        _h264('64003f'),
+        _codec('video/VP9', 'profile-id=0'),
+        _codec('video/H264'),
+      ]) {
+        expect(screenShareCodecPreferences([unsuitable]), isNull);
+      }
+      expect(screenShareCodecPreferences([_h264('640033')]), hasLength(1));
+      expect(screenShareCodecPreferences([_h264('640034')]), hasLength(1));
+    });
+
+    test('puts the highest level first and keeps the rest in order', () {
+      final a = _h264('640033');
+      final b = _h264('640034');
+      final vp8 = _codec('video/VP8');
+      final low = _h264('42e01f');
+      expect(screenShareCodecPreferences([vp8, a, low, b]), [b, a, vp8, low]);
+    });
+
+    test('keeps equal levels in capability order', () {
+      final first = _h264('640034');
+      final second = _h264('640034');
+      final result = screenShareCodecPreferences([first, second])!;
+      expect(result[0], same(first));
+      expect(result[1], same(second));
+    });
+  });
 }

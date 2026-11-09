@@ -74,3 +74,6 @@ fastlane/*api*key*.json
 
 # Local agent audit notes; never committed.
 /.audit/
+
+# Voice Windows baseline run output
+baseline-results/

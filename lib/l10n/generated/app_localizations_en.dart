@@ -3344,6 +3344,35 @@ class AppLocalizationsEn extends AppLocalizations {
   String get shareScreen => 'Share screen';
 
   @override
+  String get screenShareQuality => 'Screen share quality';
+
+  @override
+  String get screenSharePreset720p60 => '720p, 60 fps';
+
+  @override
+  String get screenSharePreset1080p60 => '1080p, 60 fps';
+
+  @override
+  String get screenSharePresetHalfSource60 => 'Half of your screen, 60 fps';
+
+  @override
+  String screenShareUploadEstimate(int mbps, int viewers) {
+    String _temp0 = intl.Intl.pluralLogic(
+      viewers,
+      locale: localeName,
+      other: '$viewers viewers',
+      one: '1 viewer',
+    );
+    return 'Needs about $mbps Mbps upload with $_temp0';
+  }
+
+  @override
+  String get youAreSharing => 'You\'re sharing';
+
+  @override
+  String get screenShareUnsupportedViewer => 'Can\'t receive your screen share';
+
+  @override
   String get raiseHand => 'Raise hand';
 
   @override

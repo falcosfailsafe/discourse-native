@@ -75,6 +75,24 @@ void FlutterWebRTC::HandleMethodCall(
     const EncodableMap constraints = findMap(params, "constraints");
 
     GetDisplayMedia(constraints, std::move(result));
+  } else if (method_call.method_name().compare(
+                 "getSharedScreenEncoderCapabilities") == 0) {
+    shared_screen_.GetCapabilities(std::move(result));
+  } else if (method_call.method_name().compare("getSharedScreenMedia") == 0) {
+    if (!method_call.arguments()) {
+      result->Error("Bad Arguments", "Null arguments received");
+      return;
+    }
+    shared_screen_.GetSharedScreenMedia(
+        GetValue<EncodableMap>(*method_call.arguments()), std::move(result));
+  } else if (method_call.method_name().compare("setPeerBitrate") ==
+             0) {
+    if (!method_call.arguments()) {
+      result->Error("Bad Arguments", "Null arguments received");
+      return;
+    }
+    shared_screen_.SetPeerConnectionBitrate(
+        GetValue<EncodableMap>(*method_call.arguments()), std::move(result));
   } else if (method_call.method_name().compare("getDesktopSources") == 0) {
     // types: ["screen", "window"]
     if (!method_call.arguments()) {

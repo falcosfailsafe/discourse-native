@@ -24,7 +24,24 @@ concessions:
 | No NVENC | Screen share uses today's software path |
 | Sender upload too small | The user's responsibility; the picker shows how much upload the preset needs |
 
-## Where we stand
+## Implementation status
+
+The Windows runner/CI, shared-encoder Dart controls and native bridge, and
+GPU/NVENC/passthrough source overlay are implemented. **Phase 2 is not yet
+accepted:** the custom Windows DLL/app builds and the hardware acceptance call
+below must pass. The shipped manifest intentionally remains on the stock
+binary until a custom release is successfully built, tested and SHA-256-pinned.
+
+- Build recipe, immutable source pins and fork instructions:
+  [`tool/libwebrtc/README.md`](../../tool/libwebrtc/README.md).
+- Baseline and hardware validation procedure (no measurements fabricated):
+  [voice-windows-baseline.md](../voice-windows-baseline.md).
+- Shared hardware mode initially captures the primary SDR monitor. The native
+  bridge also accepts an explicit desktop `sourceId`; the app does not yet
+  expose a monitor picker for this path. HDR/rotated monitors fail back to the
+  ordinary capture path. DXGI cursor composition is not implemented.
+
+## Starting point
 
 The goal needs our own libwebrtc build. None of this is a Dart-only change.
 
@@ -94,18 +111,25 @@ encoding, and we have CPU and frame-rate numbers at 1080p and at the
 7680×2160 source as a baseline.
 
 - [ ] Add the Windows Flutter runner and build Voice with the stock libwebrtc.
-- [ ] Add a Windows CI job (format, analyze, build).
-- [ ] Cover the Windows plugin files in `tool/vendor_provenance_contract.dart`.
-- [ ] Record the baseline.
+  (Runner added; not yet built on Windows, so left open until CI passes.)
+- [x] Add a Windows CI job (format, analyze, build). (`windows-bundle` in `ci.yml`.)
+- [x] Cover the Windows plugin files in `tool/vendor_provenance_contract.dart`.
+- [ ] Record the baseline. Procedure and empty results table:
+  [voice-windows-baseline.md](../voice-windows-baseline.md). Nothing is
+  measured yet.
 
 ## Phase 1 — Our own libwebrtc build
 
 Done when the app runs on our build with no change in behaviour.
 
-- [ ] Fork `webrtc-sdk/libwebrtc` on `m150_release`.
+- [x] Fork [`webrtc-sdk/libwebrtc`](https://github.com/falcosfailsafe/libwebrtc)
+  and pin its `libwebrtc.m150.7871.07` wrapper plus the underlying
+  `webrtc-sdk/webrtc` `m150_release` commit. (`m150_release` is not a branch in
+  the wrapper repository.)
 - [ ] Build `libwebrtc.dll` (x64) in CI and point `libwebrtc_version.ini` at
-  our release.
-- [ ] Document the fork in `PATCHES.md` and extend the provenance check.
+  our release. The workflow and per-Windows URL/version/SHA-256 selection are
+  implemented; successful build and release pinning remain acceptance gates.
+- [x] Document the fork in `PATCHES.md` and extend the provenance check.
 
 ## Phase 2 — Shared NVENC screen share (H.264)
 

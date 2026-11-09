@@ -9,6 +9,7 @@
 #include "flutter_media_stream.h"
 #include "flutter_peerconnection.h"
 #include "flutter_screen_capture.h"
+#include "flutter_shared_screen.h"
 #include "flutter_video_renderer.h"
 
 #include "libwebrtc.h"
@@ -43,6 +44,7 @@ class FlutterWebRTC : public FlutterWebRTCBase,
                         std::unique_ptr<MethodResultProxy> result);
 
  private:
+  FlutterSharedScreen shared_screen_{this};
   void initLoggerCallback(RTCLoggingSeverity severity);
   RTCLoggingSeverity str2LogSeverity(std::string str);
 };

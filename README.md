@@ -19,7 +19,8 @@ export RUSTUP_TOOLCHAIN=1.92.0
 ```
 
 On Linux, install `cmake meson ninja-build nasm` and [rustup](https://rustup.rs),
-then select the same Rust toolchain. Apple cross-builds also need the target,
+then select the same Rust toolchain. On Windows install CMake, Meson, Ninja, NASM and
+the MSVC toolchain, plus Rust with the same pinned toolchain. Apple cross-builds also need the target,
 for example `rustup target add --toolchain 1.92.0 aarch64-apple-ios`.
 CI installs these tools through `.github/actions/setup-avif`.
 

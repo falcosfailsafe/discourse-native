@@ -10,6 +10,7 @@ import 'package:livekit_client/livekit_client.dart' as lk;
 import 'voice_livekit_endpoint.dart';
 import 'voice_models.dart';
 import 'voice_reconnect.dart';
+import 'voice_screen_share.dart';
 import 'voice_video_adapter.dart';
 import 'voice_video_handle.dart';
 
@@ -23,6 +24,19 @@ typedef VoicePeerConnectionCreator =
     Future<rtc.RTCPeerConnection> Function(Map<String, dynamic> configuration);
 typedef VoiceUserMediaGetter =
     Future<rtc.MediaStream> Function(Map<String, dynamic> constraints);
+typedef VoiceSharedScreenCapabilitiesGetter =
+    Future<rtc.SharedScreenEncoderCapabilities> Function();
+typedef VoiceSharedScreenMediaGetter =
+    Future<rtc.MediaStream> Function(rtc.SharedScreenEncoderPreset preset);
+typedef VoicePeerBitrateSetter =
+    Future<void> Function(
+      rtc.RTCPeerConnection peer, {
+      required int minBitrate,
+      required int startBitrate,
+      required int maxBitrate,
+    });
+typedef VoiceSenderCapabilitiesGetter =
+    Future<rtc.RTCRtpCapabilities> Function(String kind);
 typedef VoiceMediaDeviceEnumerator =
     Future<List<rtc.MediaDeviceInfo>> Function();
 typedef VoiceTrackVolumeSetter =
@@ -438,7 +452,15 @@ final class _MeshTrackVolume {
   }
 }
 
-final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
+const _auxiliaryCodecs = {'rtx', 'red', 'ulpfec', 'flexfec-03'};
+
+// A negative start or maximum leaves that estimator setting unchanged; a zero
+// minimum lifts the floor a shared share raised.
+const _releasedStartBitrate = -1;
+const _releasedMaxBitrate = -1;
+
+final class MeshVoiceMediaSession extends _VoiceMediaNotifier
+    implements VoiceScreenShareEncoding {
   MeshVoiceMediaSession({
     required this.join,
     required this.localUserId,
@@ -448,6 +470,10 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
     VoicePeerConnectionCreator? createPeerConnection,
     VoiceUserMediaGetter? getUserMedia,
     VoiceUserMediaGetter? getDisplayMedia,
+    VoiceSharedScreenCapabilitiesGetter? getSharedScreenCapabilities,
+    VoiceSharedScreenMediaGetter? getSharedScreenMedia,
+    VoiceSenderCapabilitiesGetter? getSenderCapabilities,
+    VoicePeerBitrateSetter? setPeerBitrate,
     VoiceMediaDeviceEnumerator? enumerateDevices,
     VoiceTrackVolumeSetter? setTrackVolume,
   }) : _createPeerConnection = createPeerConnection ?? rtc.createPeerConnection,
@@ -459,6 +485,15 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
            getDisplayMedia ??
            ((constraints) =>
                rtc.navigator.mediaDevices.getDisplayMedia(constraints)),
+       _getSharedScreenCapabilities =
+           getSharedScreenCapabilities ?? rtc.SharedScreenEncoder.capabilities,
+       _getSharedScreenMedia =
+           getSharedScreenMedia ??
+           ((preset) => rtc.SharedScreenEncoder.getSharedScreenMedia(preset)),
+       _getSenderCapabilities =
+           getSenderCapabilities ?? rtc.getRtpSenderCapabilities,
+       _setPeerBitrate =
+           setPeerBitrate ?? rtc.SharedScreenEncoder.setPeerBitrate,
        _enumerateDevices =
            enumerateDevices ??
            (() => rtc.navigator.mediaDevices.enumerateDevices()),
@@ -471,6 +506,10 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
   final VoicePeerConnectionCreator _createPeerConnection;
   final VoiceUserMediaGetter _getUserMedia;
   final VoiceUserMediaGetter _getDisplayMedia;
+  final VoiceSharedScreenCapabilitiesGetter _getSharedScreenCapabilities;
+  final VoiceSharedScreenMediaGetter _getSharedScreenMedia;
+  final VoiceSenderCapabilitiesGetter _getSenderCapabilities;
+  final VoicePeerBitrateSetter _setPeerBitrate;
   final VoiceMediaDeviceEnumerator _enumerateDevices;
   final VoiceTrackVolumeSetter _setTrackVolume;
   final Map<int, rtc.RTCPeerConnection> _peers = {};
@@ -496,6 +535,14 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
   final Set<int> _makingOffer = {};
   rtc.MediaStream? _localStream;
   rtc.MediaStream? _screenStream;
+  // The capture that came from the shared hardware encoder. Compared by
+  // identity with [_screenStream], so a stale value never matches a later one.
+  rtc.MediaStream? _sharedEncodeStream;
+  Future<bool>? _sharedEncodingProbe;
+  bool _sharedEncodingDisabled = false;
+  final Set<int> _sharedUnsupportedPeers = {};
+  VoiceScreenSharePreset _screenSharePreset =
+      VoiceScreenSharePreset.defaultPreset;
   bool _deafened = false;
   bool _muted = false;
   int _muteRevision = 0;
@@ -521,10 +568,58 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
       VoiceMediaConnectionState.connected;
 
   @override
-  VoiceVideoHandle? get localVideoTrack => _videoHandles.fromRtc(
-    _screenVideoTrack ?? _cameraTrack,
-    screenShare: screenSharing,
-  );
+  VoiceVideoHandle? get localVideoTrack => _screenShareShared
+      ? null
+      : _videoHandles.fromRtc(
+          _screenVideoTrack ?? _cameraTrack,
+          screenShare: screenSharing,
+        );
+
+  bool get _screenShareShared =>
+      _screenStream != null && identical(_screenStream, _sharedEncodeStream);
+
+  @override
+  VoiceScreenSharePreset get screenSharePreset => _screenSharePreset;
+
+  @override
+  set screenSharePreset(VoiceScreenSharePreset value) {
+    _screenSharePreset = value;
+  }
+
+  @override
+  bool screenSharePreviewHidden(int participantId) =>
+      participantId == localUserId && _screenShareShared;
+
+  @override
+  Future<bool> hardwareEncodingAvailable() async {
+    if (_sharedEncodingDisabled) return false;
+    return _sharedEncodingProbe ??= _probeSharedEncoding();
+  }
+
+  @override
+  Set<int> get screenShareUnsupportedPeerIds =>
+      Set.unmodifiable(_sharedUnsupportedPeers);
+
+  /// The encoder exists and this build can negotiate the H.264 it emits.
+  ///
+  /// The shared stream is H.264 High 5.1 or above regardless of what a peer
+  /// negotiated, so a sender that cannot offer it keeps today's path.
+  Future<bool> _probeSharedEncoding() async {
+    try {
+      final capabilities = await _getSharedScreenCapabilities();
+      if (!capabilities.available || !capabilities.supports('H264')) {
+        return false;
+      }
+      final sender = await _getSenderCapabilities('video');
+      return screenShareCodecPreferences(
+            sender.codecs ?? const <rtc.RTCRtpCodecCapability>[],
+          ) !=
+          null;
+    } catch (_) {
+      // No answer is no encoder: screen share keeps today's path.
+      return false;
+    }
+  }
 
   @override
   bool get screenSharing => _screenStream != null;
@@ -899,8 +994,13 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
         kind: rtc.RTCRtpMediaType.RTCRtpMediaTypeAudio,
         init: rtc.RTCRtpTransceiverInit(direction: publishingDirection),
       );
-      if (_publishedVideoTrack case final track?) {
-        await video.sender.replaceTrack(track);
+      await _preferScreenShareCodecBestEffort(video);
+      // A shared-encode stream reaches a peer only once its negotiated codec
+      // is known to be the H.264 it carries; see _admitSharedPeer.
+      if (!_screenShareShared) {
+        if (_publishedVideoTrack case final track?) {
+          await video.sender.replaceTrack(track);
+        }
       }
       if (_screenAudioTrack case final track?) {
         await screenAudio.sender.replaceTrack(track);
@@ -1045,6 +1145,7 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
         await peer.setLocalDescription(answer);
         await _sendPeerSignal(senderId, {'type': 'answer', 'sdp': answer.sdp});
         await _refreshSendSlotsBestEffort(senderId, peer);
+        await _admitSharedPeer(senderId);
       case _MeshSdpSignal(kind: _MeshSdpKind.answer, :final sdp):
         if (await peer.getSignalingState() !=
             rtc.RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
@@ -1055,6 +1156,7 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
         );
         await _flushCandidates(senderId);
         await _refreshSendSlotsBestEffort(senderId, peer);
+        await _admitSharedPeer(senderId);
       case _MeshCandidateSignal(
         :final candidate,
         :final sdpMid,
@@ -1137,6 +1239,7 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
         slots.video,
         video,
       );
+      await _preferScreenShareCodecBestEffort(video);
     }
     if (audio.length >= 2) {
       slots.screenAudio = await _adoptAnswerSender(
@@ -1544,14 +1647,16 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
       } catch (_) {
         // The retained capture stays silent: the user asked for it to stop,
         // and only a later start may show it again.
-        await _setSourceTrackBestEffort(_MeshSource.video, _screenVideoTrack);
+        await _publishScreenVideoBestEffort();
         await _setSourceTrackBestEffort(
           _MeshSource.screenAudio,
           _screenAudioTrack,
         );
         rethrow;
       }
+      final wasShared = _screenShareShared;
       _screenStream = null;
+      if (wasShared) await _releaseSharedPeers();
       await _disposeStreamBestEffort(stream);
       changed();
       return;
@@ -1565,12 +1670,13 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
       _setScreenTracksEnabled(true);
       return;
     }
-    final stream = await _getDisplayMedia({'video': true, 'audio': true});
+    final (stream, shared) = await _captureScreen();
     if (superseded()) {
       await _disposeStreamBestEffort(stream);
       return;
     }
     _screenStream = stream;
+    _sharedEncodeStream = shared ? stream : null;
     if (stream.getVideoTracks().firstOrNull case final screenVideo?) {
       screenVideo.onEnded = () {
         if (!identical(_screenStream, stream) || _closing || disposed) return;
@@ -1578,10 +1684,12 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
       };
     }
     try {
-      await _setSourceTrack(_MeshSource.video, _publishedVideoTrack);
+      await _publishScreenVideo();
       await _setSourceTrack(_MeshSource.screenAudio, _screenAudioTrack);
     } catch (error, stackTrace) {
+      final wasShared = _screenShareShared;
       _screenStream = null;
+      if (wasShared) await _releaseSharedPeers();
       await _setSourceTrackBestEffort(_MeshSource.video, _cameraTrack);
       await _setSourceTrackBestEffort(_MeshSource.screenAudio, null);
       await _disposeStreamBestEffort(stream);
@@ -1590,12 +1698,155 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
     changed();
   }
 
+  /// Captures the screen through the shared hardware encoder when the
+  /// platform has one, and through ordinary screen capture otherwise.
+  ///
+  /// Only an encoder that reports itself unavailable falls back: any other
+  /// failure, such as a cancelled picker, reaches the caller unchanged rather
+  /// than prompting a second time.
+  Future<(rtc.MediaStream, bool)> _captureScreen() async {
+    if (await hardwareEncodingAvailable()) {
+      try {
+        final stream = await _getSharedScreenMedia(
+          _screenSharePreset.toEncoderPreset(),
+        );
+        return (stream, true);
+      } on rtc.SharedScreenEncoderUnavailable {
+        _sharedEncodingDisabled = true;
+      }
+    }
+    return (await _getDisplayMedia({'video': true, 'audio': true}), false);
+  }
+
+  /// Steers the video transceiver toward H.264 High 5.1 or above.
+  ///
+  /// A failure here is tolerated because it is checked where it matters:
+  /// [_admitSharedPeer] withholds the shared stream from any peer whose
+  /// negotiated codec is anything else.
+  Future<void> _preferScreenShareCodecBestEffort(
+    rtc.RTCRtpTransceiver transceiver,
+  ) async {
+    try {
+      if (!await hardwareEncodingAvailable()) return;
+      final capabilities = await _getSenderCapabilities('video');
+      final preferences = screenShareCodecPreferences(
+        capabilities.codecs ?? const <rtc.RTCRtpCodecCapability>[],
+      );
+      if (preferences == null) return;
+      await transceiver.setCodecPreferences(preferences);
+    } catch (_) {}
+  }
+
+  Future<void> _publishScreenVideo() async {
+    if (!_screenShareShared) {
+      await _setSourceTrack(_MeshSource.video, _publishedVideoTrack);
+      return;
+    }
+    for (final peerId in _sendSlots.keys.toList()) {
+      await _admitSharedPeer(peerId);
+    }
+  }
+
+  Future<void> _publishScreenVideoBestEffort() async {
+    try {
+      await _publishScreenVideo();
+    } catch (_) {}
+  }
+
+  /// Gives one peer the shared stream, or none.
+  ///
+  /// The encoder emits H.264 High 5.1+ whatever a peer negotiated, and the
+  /// sender is required to hold the preset's rate. So the stream is attached
+  /// only after this peer's negotiated send codec is that H.264, its
+  /// bandwidth estimate is raised and its sender is limited. Any failure
+  /// leaves the peer without video and listed in
+  /// [screenShareUnsupportedPeerIds]; it never receives mismatched payload.
+  Future<void> _admitSharedPeer(int peerId) async {
+    if (!_screenShareShared || _closing || disposed) return;
+    final slots = _sendSlots[peerId];
+    final peer = _peers[peerId];
+    final track = _screenVideoTrack;
+    if (slots == null || peer == null || track == null) return;
+    final sender = slots.video;
+    try {
+      final parameters = sender.parameters;
+      final codec = (parameters.codecs ?? const <rtc.RTCRTPCodec>[])
+          .where(
+            (codec) => !_auxiliaryCodecs.contains(codec.name?.toLowerCase()),
+          )
+          .firstOrNull;
+      if (codec == null || !isNegotiatedScreenShareCodec(codec)) {
+        throw StateError('H.264 High 5.1 was not negotiated');
+      }
+      final preset = _screenSharePreset;
+      await _setPeerBitrate(
+        peer,
+        minBitrate: preset.bitrate,
+        startBitrate: preset.bitrate,
+        maxBitrate: preset.bitrate,
+      );
+      for (final encoding
+          in parameters.encodings ?? const <rtc.RTCRtpEncoding>[]) {
+        encoding.maxBitrate = preset.bitrate;
+        encoding.maxFramerate = preset.frameRate;
+        encoding.scaleResolutionDownBy = 1.0;
+      }
+      // The passthrough cannot rescale, so libwebrtc must not try.
+      parameters.degradationPreference =
+          rtc.RTCDegradationPreference.MAINTAIN_RESOLUTION;
+      if (!await sender.setParameters(parameters)) {
+        throw StateError('the sender limits were refused');
+      }
+      if (!identical(_sendSlots[peerId], slots) || !_screenShareShared) return;
+      if (!identical(sender.track, track)) await sender.replaceTrack(track);
+      if (_sharedUnsupportedPeers.remove(peerId)) changed();
+    } catch (_) {
+      try {
+        if (sender.track != null) await sender.replaceTrack(null);
+      } catch (_) {}
+      if (_sharedUnsupportedPeers.add(peerId)) changed();
+    }
+  }
+
+  /// Frees every peer from the preset's limits after a shared share ends.
+  Future<void> _releaseSharedPeers() async {
+    _sharedUnsupportedPeers.clear();
+    for (final entry in _sendSlots.entries.toList()) {
+      if (!identical(_sendSlots[entry.key], entry.value)) continue;
+      final peer = _peers[entry.key];
+      try {
+        if (peer != null) {
+          await _setPeerBitrate(
+            peer,
+            minBitrate: 0,
+            startBitrate: _releasedStartBitrate,
+            maxBitrate: _releasedMaxBitrate,
+          );
+        }
+      } catch (_) {}
+      try {
+        final sender = entry.value.video;
+        final parameters = sender.parameters;
+        for (final encoding
+            in parameters.encodings ?? const <rtc.RTCRtpEncoding>[]) {
+          encoding.maxBitrate = null;
+          encoding.maxFramerate = null;
+        }
+        parameters.degradationPreference =
+            rtc.RTCDegradationPreference.BALANCED;
+        await sender.setParameters(parameters);
+      } catch (_) {}
+    }
+  }
+
   Future<void> _endScreenShare(rtc.MediaStream stream) async {
     if (!identical(_screenStream, stream)) return;
     // An ended capture cannot be restored by rolling senders back. Relinquish
     // ownership even when a peer cannot switch to the camera or detach.
+    final wasShared = _screenShareShared;
     _screenStream = null;
     try {
+      if (wasShared) await _releaseSharedPeers();
       await _detachEndedScreenSourceBestEffort(_MeshSource.video, _cameraTrack);
       await _detachEndedScreenSourceBestEffort(_MeshSource.screenAudio, null);
     } finally {
@@ -1718,6 +1969,7 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier {
   Future<void> _closePeer(int id) async {
     final peer = _peers.remove(id);
     _sendSlots.remove(id);
+    _sharedUnsupportedPeers.remove(id);
     final remote = _remoteTracks.remove(id);
     if (remote != null) {
       for (final track in remote.audioTracks) {

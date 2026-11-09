@@ -6,12 +6,18 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: 'Run Windows format, analyze and bundle verification only'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   checks:
+    if: github.event_name != 'workflow_dispatch' || inputs.windows_only != true
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -75,6 +81,13 @@ jobs:
             libgtk-3-dev liblzma-dev libstdc++-12-dev \
             libwebkit2gtk-4.1-dev libsoup-3.0-dev
 
+      - name: Test libwebrtc build contracts
+        # CMake is installed above; the native tests need no libwebrtc.
+        run: |
+          set -euxo pipefail
+          python3 -m unittest discover -s tool/libwebrtc -p 'test_*.py' -v
+          bash tool/libwebrtc/run_native_tests.sh
+
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
@@ -115,6 +128,68 @@ jobs:
           LC_ALL=C grep -aFq 'LiveKitPlugin' "$core"
           LC_ALL=C grep -aFq 'FlutterWebRTCPlugin' "$full"
           LC_ALL=C grep -aFq 'LiveKitPlugin' "$full"
+
+  windows-bundle:
+    # Voice screen share targets Windows (docs/plans/voice-hardware-encoding.md).
+    # Keep the runner, the stock libwebrtc download and the plugin graph
+    # buildable. The full test suite stays on Linux.
+    needs: checks
+    if: always() && (needs.checks.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.windows_only == true))
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep LF line endings
+        # dart format --set-exit-if-changed rejects CRLF rewrites of the tree.
+        run: git config --global core.autocrlf false
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version-file: .fvmrc
+          channel: stable
+          cache: true
+
+      - name: Resolve root and compatibility package graphs
+        run: |
+          flutter pub get --enforce-lockfile
+          (cd packages/discourse_voice && flutter pub get --enforce-lockfile)
+
+      - name: Check formatting
+        run: |
+          dart format --output=none --set-exit-if-changed \
+            lib test integration_test tool \
+            packages/discourse_voice/lib \
+            packages/discourse_voice/tool
+
+      - name: Analyze
+        run: |
+          flutter analyze
+          (cd packages/discourse_voice && flutter analyze)
+
+      - name: Set up AVIF build tools
+        uses: ./.github/actions/setup-avif
+
+      - name: Build Windows bundle
+        run: flutter build windows --debug
+
+      - name: Smoke-check bundle
+        run: |
+          set -euxo pipefail
+          bundle=build/windows/x64/runner/Debug
+          test -f "$bundle/discourse_native.exe"
+          test -f "$bundle/flutter_windows.dll"
+          # Voice's WebRTC plugin and the stock prebuilt libwebrtc it bundles.
+          test -f "$bundle/flutter_webrtc_plugin.dll"
+          test -f "$bundle/libwebrtc.dll"
+          test -f "$bundle/livekit_client_plugin.dll"
 
   apple-bundles:
     # Compile both application wrappers on Apple. Each must include the

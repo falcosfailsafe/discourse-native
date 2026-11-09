@@ -21,6 +21,7 @@ import 'voice_media.dart';
 import 'voice_models.dart';
 import 'voice_reaction_widgets.dart';
 import 'voice_room_editor.dart';
+import 'voice_screen_share.dart';
 import 'voice_services.dart';
 import 'voice_shell_service.dart';
 import 'voice_video_handle.dart';
@@ -197,7 +198,9 @@ class _VoiceRoomControllerViewState extends State<_VoiceRoomControllerView> {
       },
       onKeyEvent: (_, event) {
         if (!widget.controller.pushToTalkEnabled ||
-            (!Platform.isMacOS && !Platform.isLinux) ||
+            !VoiceController.isDesktopOperatingSystem(
+              Platform.operatingSystem,
+            ) ||
             event.logicalKey != LogicalKeyboardKey.space) {
           return KeyEventResult.ignored;
         }
@@ -693,7 +696,10 @@ class _VoiceRoomStage extends StatelessWidget {
             if (participant.id != featured.id) tileBuilder(participant),
           ...ringingTiles,
         ];
-        final wide = constraints.maxWidth >= 700;
+        // A shared screen is often ultra-wide (32:9). Beside a sidebar it would
+        // shrink into a letterbox, so it takes the full width and the other
+        // tiles move to a strip beneath it.
+        final wide = constraints.maxWidth >= 700 && remoteShare == null;
         final featuredTile = tileBuilder(featured);
         return Padding(
           padding: const EdgeInsets.all(DSpacing.md),
@@ -788,6 +794,8 @@ class _ParticipantTile extends StatefulWidget {
 class _ParticipantTileState extends State<_ParticipantTile> {
   VoiceVideoHandle? _videoTrack;
   bool _speaking = false;
+  bool _previewHidden = false;
+  bool _cannotReceiveShare = false;
 
   @override
   void initState() {
@@ -811,17 +819,40 @@ class _ParticipantTileState extends State<_ParticipantTile> {
     _speaking =
         widget.media?.speakingParticipantIds.contains(widget.participant.id) ??
         false;
+    _previewHidden = _readPreviewHidden();
+    _cannotReceiveShare = _readCannotReceiveShare();
   }
+
+  bool _readPreviewHidden() => switch (widget.media) {
+    final VoiceScreenShareEncoding encoding =>
+      encoding.screenSharePreviewHidden(widget.participant.id),
+    _ => false,
+  };
+
+  bool _readCannotReceiveShare() => switch (widget.media) {
+    final VoiceScreenShareEncoding encoding =>
+      encoding.screenShareUnsupportedPeerIds.contains(widget.participant.id),
+    _ => false,
+  };
 
   void _mediaChanged() {
     final videoTrack = widget.media?.videoTrackFor(widget.participant.id);
     final speaking =
         widget.media?.speakingParticipantIds.contains(widget.participant.id) ??
         false;
-    if (identical(videoTrack, _videoTrack) && speaking == _speaking) return;
+    final previewHidden = _readPreviewHidden();
+    final cannotReceiveShare = _readCannotReceiveShare();
+    if (identical(videoTrack, _videoTrack) &&
+        speaking == _speaking &&
+        previewHidden == _previewHidden &&
+        cannotReceiveShare == _cannotReceiveShare) {
+      return;
+    }
     setState(() {
       _videoTrack = videoTrack;
       _speaking = speaking;
+      _previewHidden = previewHidden;
+      _cannotReceiveShare = cannotReceiveShare;
     });
   }
 
@@ -855,6 +886,17 @@ class _ParticipantTileState extends State<_ParticipantTile> {
             children: [
               if (videoTrack != null)
                 VoiceVideoSurface(track: videoTrack)
+              else if (_previewHidden)
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: DSpacing.sm,
+                    children: [
+                      const DIcon(DIcons.display, size: 32),
+                      Text(context.l10n.youAreSharing),
+                    ],
+                  ),
+                )
               else
                 Center(
                   child: DAvatar.frame(
@@ -869,6 +911,12 @@ class _ParticipantTileState extends State<_ParticipantTile> {
                       ),
                     ),
                   ),
+                ),
+              if (_cannotReceiveShare)
+                PositionedDirectional(
+                  top: DSpacing.sm,
+                  start: DSpacing.sm,
+                  child: Text(context.l10n.screenShareUnsupportedViewer),
                 ),
               PositionedDirectional(
                 bottom: DSpacing.sm,
@@ -1021,6 +1069,24 @@ class _ParticipantTileState extends State<_ParticipantTile> {
   }
 }
 
+/// Replaces the host platform when deciding whether the screen share control
+/// is offered, so tests can stand in for another desktop.
+@visibleForTesting
+TargetPlatform? debugVoiceScreenSharePlatform;
+
+/// Desktop platforms capture the screen; Windows adds the shared hardware
+/// encoder path (docs/plans/voice-hardware-encoding.md).
+bool get _screenShareSupportedPlatform =>
+    switch (debugVoiceScreenSharePlatform) {
+      null => VoiceController.isDesktopOperatingSystem(
+        Platform.operatingSystem,
+      ),
+      TargetPlatform.macOS ||
+      TargetPlatform.linux ||
+      TargetPlatform.windows => true,
+      _ => false,
+    };
+
 class _CallControls extends StatefulWidget {
   const _CallControls({
     required this.controller,
@@ -1107,7 +1173,7 @@ class _CallControlsState extends State<_CallControls> {
         me?.canPublishVideo != false;
     final cameraOn = call.cameraEnabled || controller.cameraStarting;
     final canShare =
-        (Platform.isMacOS || Platform.isLinux) &&
+        _screenShareSupportedPlatform &&
         canPublish &&
         call.room.videoEnabled &&
         call.room.screenShareAllowed &&
@@ -1132,7 +1198,8 @@ class _CallControlsState extends State<_CallControls> {
               : context.l10n.shareScreen,
           icon: DIcons.display,
           selected: call.screenSharing,
-          onPressed: () => controller.setScreenSharing(!call.screenSharing),
+          onPressed: () =>
+              unawaited(_toggleScreenShare(context, controller, call)),
         ),
       if (call.room.type == VoiceRoomType.stage &&
           role == VoiceRole.participant)
@@ -1747,6 +1814,105 @@ class _VoiceInviteDialogState extends State<_VoiceInviteDialog> {
   }
 }
 
+/// Stops a screen share, or starts one, first asking for a quality when the
+/// machine can encode once for every viewer.
+Future<void> _toggleScreenShare(
+  BuildContext context,
+  VoiceController controller,
+  VoiceCallSnapshot call,
+) async {
+  if (call.screenSharing) return controller.setScreenSharing(false);
+  final media = call.media;
+  if (media case final VoiceScreenShareEncoding encoding
+      when await encoding.hardwareEncodingAvailable()) {
+    if (!context.mounted) return;
+    final viewers = call.room.participants.length - 1;
+    await _showScreenSharePicker(
+      context,
+      encoding,
+      viewers: viewers,
+      onStart: () => controller.setScreenSharing(true),
+    );
+    return;
+  }
+  await controller.setScreenSharing(true);
+}
+
+Future<void> _showScreenSharePicker(
+  BuildContext context,
+  VoiceScreenShareEncoding encoding, {
+  required int viewers,
+  required Future<void> Function() onStart,
+}) {
+  var preset = encoding.screenSharePreset;
+  return _showVoiceRoomForm(
+    context: context,
+    title: context.l10n.screenShareQuality,
+    builder: (context, dialog) => StatefulBuilder(
+      builder: (context, setState) => _VoiceRoomFormLayout(
+        title: context.l10n.screenShareQuality,
+        maxWidth: 480,
+        actions: [
+          DButton(
+            variant: DButtonVariant.secondary,
+            onPressed: dialog.close,
+            label: Text(context.l10n.cancel),
+            expanded: context.isTouch,
+          ),
+          DButton(
+            variant: DButtonVariant.primary,
+            onPressed: () {
+              encoding.screenSharePreset = preset;
+              dialog.close();
+              unawaited(onStart());
+            },
+            label: Text(context.l10n.shareScreen),
+            expanded: context.isTouch,
+          ),
+        ],
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          spacing: DSpacing.md,
+          children: [
+            DSelect<VoiceScreenSharePreset>.controlled(
+              isExpanded: true,
+              label: Text(context.l10n.screenShareQuality),
+              value: preset,
+              onChanged: (value) {
+                if (value != null) setState(() => preset = value);
+              },
+              entries: [
+                for (final option in VoiceScreenSharePreset.values)
+                  DSelectOption(
+                    value: option,
+                    label: _presetLabel(context, option),
+                    child: Text(_presetLabel(context, option)),
+                  ),
+              ],
+              initialValue: preset,
+            ),
+            Text(
+              context.l10n.screenShareUploadEstimate(
+                preset.uploadMbps(viewers),
+                viewers < 1 ? 1 : viewers,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+String _presetLabel(BuildContext context, VoiceScreenSharePreset preset) =>
+    switch (preset) {
+      VoiceScreenSharePreset.p720x60 => context.l10n.screenSharePreset720p60,
+      VoiceScreenSharePreset.p1080x60 => context.l10n.screenSharePreset1080p60,
+      VoiceScreenSharePreset.halfSource60 =>
+        context.l10n.screenSharePresetHalfSource60,
+    };
+
 Future<void> _showParticipantVolume(
   BuildContext context,
   VoiceController controller,
@@ -1925,7 +2091,10 @@ Future<void> _showMediaSettings(
                   await controller.selectCamera(value);
                 },
               ),
-              if (!mobile && (Platform.isMacOS || Platform.isLinux))
+              if (!mobile &&
+                  VoiceController.isDesktopOperatingSystem(
+                    Platform.operatingSystem,
+                  ))
                 DSwitchTile(
                   value: pushToTalk,
                   title: DLabel(child: Text(appL10n.pushToTalk)),

@@ -589,6 +589,7 @@ void FlutterMediaStream::MediaStreamDispose(
   for (auto track : audio_tracks.std_vector()) {
     stream->RemoveTrack(track);
     base_->local_tracks_.erase(track->id().std_string());
+    base_->NotifyLocalTrackRemoved(track->id().std_string());
   }
 
   vector<scoped_refptr<RTCVideoTrack>> video_tracks = stream->video_tracks();

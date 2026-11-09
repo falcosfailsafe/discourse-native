@@ -138,6 +138,7 @@ void FlutterWebRTCBase::RemoveMediaTrackForId(const std::string& id) {
   if (it != local_tracks_.end())
     local_tracks_.erase(it);
   RemoveVideoSourceForId(id);
+  NotifyLocalTrackRemoved(id);
 }
 
 bool FlutterWebRTCBase::AddVideoProcessor(const std::string& track_id,
@@ -463,6 +464,7 @@ void FlutterWebRTCBase::RemoveTracksForId(const std::string& id) {
   if (it != local_tracks_.end())
     local_tracks_.erase(it);
   RemoveVideoSourceForId(id);
+  NotifyLocalTrackRemoved(id);
 }
 
 libwebrtc::scoped_refptr<libwebrtc::RTCRtpSender>
