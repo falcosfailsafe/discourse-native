@@ -2,6 +2,11 @@
 cmake_minimum_required(VERSION 3.14)
 project(discourse_native LANGUAGES CXX)
 
+# webview_all_windows is built with /await and <experimental/coroutine>, which
+# newer MSVC STLs flag with STL1011 as deprecated. Until that plugin moves to
+# C++20 coroutines, silence the check for every target in this build.
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "discourse_native")
