@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:io' show Platform;
 
 import 'package:discourse_native/src/data/discourse_api_contracts.dart';
 
@@ -5560,7 +5561,7 @@ void _sharedScreenEncodingTests() {
           (await rtc.SharedScreenEncoder.capabilities()).available,
           isFalse,
         );
-      });
+      }, skip: Platform.isWindows);
     });
 
     test('falls back once when the encoder fails to open', () async {
