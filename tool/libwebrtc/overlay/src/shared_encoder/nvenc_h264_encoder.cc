@@ -5,7 +5,9 @@
 #include "ffnvcodec/nvEncodeAPI.h"
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -34,7 +36,7 @@ struct Runtime {
 
   Runtime() { loaded = Load(&error); }
 
-  bool Load(std::string* error) {
+  bool Load(std::string* out_error) {
 #ifdef _WIN32
     // The driver installs the DLL in System32. Search only there so a DLL
     // planted in the current directory or next to the app is never loaded.
@@ -46,7 +48,7 @@ struct Runtime {
     const char* name = "libnvidia-encode.so.1";
 #endif
     if (!module) {
-      *error = std::string(name) + " not found (no NVIDIA driver with NVENC)";
+      *out_error = std::string(name) + " not found (no NVIDIA driver with NVENC)";
       return false;
     }
     auto sym = [&](const char* s) -> void* {
@@ -62,18 +64,18 @@ struct Runtime {
     auto create =
         reinterpret_cast<CreateInstanceFn>(sym("NvEncodeAPICreateInstance"));
     if (!max_version || !create) {
-      *error = "NVENC runtime lacks the expected entry points";
+      *out_error = "NVENC runtime lacks the expected entry points";
       return false;
     }
     uint32_t supported = 0;
     if (max_version(&supported) != NV_ENC_SUCCESS) {
-      *error = "NvEncodeAPIGetMaxSupportedVersion failed";
+      *out_error = "NvEncodeAPIGetMaxSupportedVersion failed";
       return false;
     }
     const uint32_t ours =
         (NVENCAPI_MAJOR_VERSION << 4) | NVENCAPI_MINOR_VERSION;
     if (supported < ours) {
-      *error = "NVIDIA driver is too old for NVENC API " +
+      *out_error = "NVIDIA driver is too old for NVENC API " +
                std::to_string(NVENCAPI_MAJOR_VERSION) + "." +
                std::to_string(NVENCAPI_MINOR_VERSION);
       return false;
@@ -82,7 +84,7 @@ struct Runtime {
     fn.version = NV_ENCODE_API_FUNCTION_LIST_VER;
     const NVENCSTATUS s = create(&fn);
     if (s != NV_ENC_SUCCESS) {
-      *error = Status("NvEncodeAPICreateInstance", s);
+      *out_error = Status("NvEncodeAPICreateInstance", s);
       return false;
     }
     return true;
