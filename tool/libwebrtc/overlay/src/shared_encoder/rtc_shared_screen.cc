@@ -7,9 +7,9 @@
 
 #include "api/peer_connection_interface.h"
 #include "api/transport/bitrate_settings.h"
-#include "rtc_peerconnection_factory_impl.h"
-#include "rtc_peerconnection_impl.h"
-#include "rtc_video_source_impl.h"
+#include "src/rtc_peerconnection_factory_impl.h"
+#include "src/rtc_peerconnection_impl.h"
+#include "src/rtc_video_source_impl.h"
 #include "src/shared_encoder/shared_screen_pipeline.h"
 
 namespace {

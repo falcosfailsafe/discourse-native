@@ -6,6 +6,7 @@
 #include <optional>
 #include <vector>
 
+#include "api/video/resolution.h"
 #include "api/video_codecs/sdp_video_format.h"
 #include "passthrough_video_encoder.h"
 #include "rtc_base/logging.h"
@@ -93,7 +94,7 @@ class SharedEncoderFactory : public webrtc::VideoEncoderFactory {
   CodecSupport QueryCodecSupport(
       const webrtc::SdpVideoFormat& format,
       std::optional<std::string> scalability_mode,
-      std::optional<webrtc::VideoEncoderFactory::Resolution> resolution)
+      std::optional<webrtc::Resolution> resolution)
       const override {
     if (IsSharedFormat(format)) {
       CodecSupport support;
@@ -160,7 +161,7 @@ class SharedDecoderFactory : public webrtc::VideoDecoderFactory {
 
   CodecSupport QueryCodecSupport(
       const webrtc::SdpVideoFormat& format, bool reference_scaling,
-      std::optional<webrtc::VideoDecoderFactory::Resolution> resolution)
+      std::optional<webrtc::Resolution> resolution)
       const override {
     if (IsSharedFormat(format)) {
       CodecSupport support;
