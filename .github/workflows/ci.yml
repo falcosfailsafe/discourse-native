@@ -290,6 +290,7 @@ jobs:
             profiles/full/build/ios/iphonesimulator/Runner.app
 
   android-video-optimizer:
+    if: github.event_name != 'workflow_dispatch' || inputs.windows_only != true
     # A disposable host checks the plugin until the app has an Android runner.
     runs-on: ubuntu-24.04
     timeout-minutes: 20
