@@ -13,9 +13,9 @@ platform, or from a different build. Prefer a blank over a guess.
 
 | Item | State |
 | --- | --- |
-| Windows runner and CI build | `windows-bundle` passes on a Windows runner (format, analyze, debug bundle built against the pinned custom `libwebrtc.dll`). The app has not been run on Windows hardware |
-| Mesh call with screen share verified on Windows | Not done |
-| Baseline runs | Not done |
+| Windows runner and CI build | CI builds the debug bundle. A local x64 Release bundle built successfully against the pinned custom DLL on 2026-11-09. See the [acceptance report](voice-windows-acceptance.md). |
+| Mesh call with screen share verified on Windows | See the local diagnostic and shared-capture blocker in the [acceptance report](voice-windows-acceptance.md). |
+| Baseline runs | No timed runs completed for cases A or B. |
 
 ## Prerequisites
 
@@ -119,10 +119,12 @@ Fill in from the run records. Leave `—` for anything not measured.
 
 | Case | Peers | CPU mean (% of machine) | CPU p95 | Sent fps | Received fps | Resolution sent | Limit reason |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| A, 1080p source | 3 | — | — | — | — | — | — |
-| B, 7680×2160 source | 3 | — | — | — | — | — | — |
+| A, 1080p source | — | — | — | — | — | — | — |
+| B, 7680×2160 source | — | — | — | — | — | — | — |
 
 Measured on: —. Commit: —.
+
+The 2026-11-09 RTX 5090 session did not include the three timed stock-libwebrtc runs at either resolution. The local Release diagnostic used simulated receivers in the sender process and is recorded separately in the [acceptance report](voice-windows-acceptance.md).
 
 ## Limits of this method
 
