@@ -169,11 +169,13 @@ jobs:
           # by relative path from the same deep tree, so shorten it too.
           mkdir -p /c/p
           echo 'PUB_CACHE=C:\p' >> "$GITHUB_ENV"
-          # cl.exe still receives long relative source paths from libavif's
-          # deep build tree: allow long paths and avoid the MSBuild generator.
-          git config --global core.longpaths true
-          powershell -NoProfile -Command "Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Type DWord -Value 1"
-          echo 'CMAKE_GENERATOR=Ninja' >> "$GITHUB_ENV"
+          # libavif's dav1d is built by CMake. Its default Visual Studio
+          # generator hands cl.exe long relative source paths from the deep
+          # .dart_tool tree, which fail at MAX_PATH. The Dart build hook
+          # drops the parent environment, but Cargo's [env] table still
+          # reaches build scripts, so select the Ninja generator there.
+          mkdir -p "$USERPROFILE/.cargo"
+          printf '[env]\nCMAKE_GENERATOR = "Ninja"\n' >> "$USERPROFILE/.cargo/config.toml"
 
       - name: Resolve root and compatibility package graphs
         working-directory: C:/w
