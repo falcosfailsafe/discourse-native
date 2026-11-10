@@ -1,0 +1,51 @@
+# Windows GPU test programs
+
+Standalone programs that exercise the shared NVENC screen share on a Windows
+machine with an NVIDIA GPU, without Flutter or libwebrtc. Build them all with:
+
+```powershell
+powershell -File tool\libwebrtc\native_tests\windows\build_nvenc_smoke_test.ps1
+```
+
+Output goes to `build\nvenc_smoke_test\`. Needs Visual Studio (or Build Tools)
+with the C++ workload. Exit code 0 means every check passed.
+
+| Program | What it proves | Needs a display |
+| --- | --- | --- |
+| `nvenc_smoke_test.exe` | Hardware H.264 encoding works: a synthetic 7680x2160 picture is scaled to 3840x1080 on the GPU and encoded through the real `NvencH264Encoder`. Checks the SPS profile/level, key frame interval, frame rate and the NVENC session count, and writes the stream for ffprobe/ffmpeg. | No |
+| `capture_encode_test.exe` | The real DXGI desktop capture feeding the real NVENC wrapper (the shared screen pipeline without libwebrtc). With `--expect-no-display` it asserts that a missing display is reported as an error, not a crash. | Yes (not for `--expect-no-display`) |
+| `shared_screen_probe.exe <libwebrtc.dll>` | Loads the DLL the way the Flutter plugin does and calls the shared-screen API. Must never crash; reports `available` and a reason. | No |
+| `display_tool.exe` | Lists GDI displays, attaches a monitor to the desktop and sets its mode. | Yes |
+
+`animate.ps1` draws moving content on a chosen display so captures see real
+motion, and `run_in_console.ps1` runs a command inside the interactive console
+session from a non-interactive one (SSH, services).
+
+## Why a display matters
+
+DXGI desktop duplication needs a display attached to an interactive desktop.
+SSH, services and scheduled tasks without an interactive logon run in
+session 0, where `IDXGIAdapter::EnumOutputs` fails with
+`DXGI_ERROR_NOT_CURRENTLY_AVAILABLE` for every index. RDP sessions use the
+Remote Display Adapter, which does not belong to the GPU. A headless GPU
+server (for example an AWS g4dn instance) therefore needs, besides the GPU
+driver:
+
+1. A virtual display (an Indirect Display Driver) that the GPU owns. This was
+   tested with [Virtual-Display-Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver)
+   25.7.23 (MIT, signed by the SignPath Foundation). Windows rejects it with
+   `0xE0000242` until that signing certificate is added to the machine's
+   Trusted Publishers store. Settings live in
+   `C:\VirtualDisplayDriver\vdd_settings.xml`; add the modes you want.
+2. A user logged in at the console, so the virtual monitor is on an
+   interactive desktop. Use a dedicated local user with auto-logon
+   (`Winlogon` `AutoAdminLogon`/`DefaultPassword`, which stores the password
+   in the registry: only do this on a disposable test machine).
+3. Run the tests in that session. From SSH, `run_in_console.ps1` does it
+   through a scheduled task with an Interactive logon. With a single virtual
+   monitor the capture source id is its zero-based GDI display index
+   (`display_tool list`), because `""` selects the primary monitor, which may
+   belong to another adapter.
+
+The virtual monitor must be 8-bit SDR; the capture refuses HDR and rotated
+displays.

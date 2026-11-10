@@ -165,7 +165,10 @@ bool FindOutput(const OutputSelector& selector, ComPtr<IDXGIAdapter1>* adapter,
   int seen = 0;
   for (UINT a = 0;; ++a) {
     ComPtr<IDXGIAdapter1> candidate;
-    if (factory->EnumAdapters1(a, &candidate) == DXGI_ERROR_NOT_FOUND) break;
+    // NOT_FOUND ends the list, but any other failure must also stop: the out
+    // pointer is null then, and using it would crash instead of reporting
+    // "no usable display" so the caller can fall back.
+    if (FAILED(factory->EnumAdapters1(a, &candidate)) || !candidate) break;
     DXGI_ADAPTER_DESC1 adapter_desc;
     if (FAILED(candidate->GetDesc1(&adapter_desc)) ||
         (adapter_desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
@@ -173,8 +176,12 @@ bool FindOutput(const OutputSelector& selector, ComPtr<IDXGIAdapter1>* adapter,
     }
     for (UINT o = 0;; ++o) {
       ComPtr<IDXGIOutput> candidate_output;
-      if (candidate->EnumOutputs(o, &candidate_output) ==
-          DXGI_ERROR_NOT_FOUND) {
+      // In a non-interactive session (a service, SSH, a locked or
+      // disconnected desktop) EnumOutputs fails with
+      // DXGI_ERROR_NOT_CURRENTLY_AVAILABLE for every index instead of
+      // NOT_FOUND. Treat any failure as the end of this adapter's outputs.
+      if (FAILED(candidate->EnumOutputs(o, &candidate_output)) ||
+          !candidate_output) {
         break;
       }
       DXGI_OUTPUT_DESC desc;
