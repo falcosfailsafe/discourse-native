@@ -301,6 +301,9 @@ control). Three peers unless stated. All through the real `libwebrtc.dll`
 | **10-minute soak**, same load | RTP delivery **60.0 fps** to every viewer from the third minute on (56.8 in the first minute while ramping up, 59.3 in the second), 24.4 Mbps per peer, no quality limitation, no loss. GPU memory flat at 755 MiB, encoder 69 to 70%. Process memory plateaued around 255 MB (239 to 261 MB, no steady climb), handles 563 to 573. Teardown 114 ms, NVENC sessions 0. |
 | What one viewer's software decoder can do (3840×1080, 24 Mbps, worst-case content) | **1 viewer: 55 fps decoded** (RTP delivery 58.7, process CPU 17% of the machine, about 1.3 logical CPUs). 2 viewers: 54 fps. 3 viewers: 49.5 fps, at which point the process is CPU-bound (49%). The sender and the network were never the limit. This is the Phase 4 measurement. |
 | Presets and H.264 levels | 1920×1080 at 60 fps (1080p preset on a 1080p display): **60.0 fps**. 3840×1080 at 60 fps (1080p preset on 32:9): 58.2 fps. 2560×720 at 60 fps (720p preset): 57.7 fps. 3840×1080 at **30 fps**: 29.4 fps. 3840×2160 at 60 fps: encoded at level 5.2 (`640034`), 60.1 fps delivered, 35 fps decoded by one software decoder. All with a clean teardown. The 3 to 4% shortfall appeared only on the 7680×2160 display; a likely cause is the noise window rendering at that size on the same GPU, but that was not isolated. |
+| Twenty rapid create, stream and teardown cycles (3 peers, heavy load) | All twenty passed: teardown 84 to 119 ms, NVENC sessions 0 after each, no crash. |
+| **Six viewers**, 720p60 preset (2560×720, ~10 Mbps each) | 9.6 Mbps per peer (57.4 Mbps in total), **57.8 fps delivered and decoded**, no loss, no freezes, no quality limitation, one NVENC session, memory 202 to 225 MB, teardown 141 ms. |
+| Six viewers at 3840×1080 (~25 Mbps each) | **Not a valid sender result:** the six software decoders in one process starve the CPU, loopback sockets overflow and the stream suffers heavy packet loss and retransmission (total 189 to 207 Mbps, delivery collapsed to about 2 fps). The sender kept encoding 60 fps with one NVENC session and no quality limitation, so the limit was this harness and machine; a real test needs the viewers on other machines. |
 | A resolution change under a live share (7680×2160 to 3840×2160 at 12 s) | The share **dies**: delivery fell to zero, the NVENC session closed, and every viewer froze on the last frame. No crash, and teardown took 12 ms. A fresh share worked immediately at the new size (1920×1080, 60 fps). The app is not told: nothing signals the failure, so it still believes it is sharing. |
 | Rotated display (90 degrees) | Refused: `rotated displays are not supported`, exit code 3 (so the app falls back). Available again once the rotation was undone. |
 | HDR on (Windows advanced color) | Refused: `the display uses HDR or a wide color space; screen share needs an SDR display`. Available again with HDR off. |
@@ -336,14 +339,17 @@ The NVENC rows come from a separate matrix in a fresh process with
 
 ### Findings from these runs
 
-1. **The encoder capability is cached forever (fixed in `.6`).**
+1. **The encoder capability was cached forever (fixed in `.6`, verified).**
    `GetEncoderCapabilities` probed once per process. A probe made while the
    display was rotated, in HDR, detached or mid-change stayed "unavailable" for
    the life of the app, even after the display was fixed: reproduced with the
    real DLL (rotated display, then restored: every later answer still said
    `rotated displays are not supported`). It also made a whole benchmark
    quietly run on the software path. A positive answer is now kept and a
-   negative one is re-probed after 3 seconds.
+   negative one is re-probed after 3 seconds. Verified on the real DLLs with
+   `scenarios/cache-test.ps1`: with `.5` all five answers stayed
+   `rotated displays are not supported` after the display was restored; with
+   `.6` the second answer was `available` (NVIDIA Tesla T4).
 2. **A display change kills a live share silently.** The pipeline stops, the
    encoder is released, viewers freeze, and the app is not told. Recommended:
    end the track (so the app sees it end) or restart the pipeline at the new

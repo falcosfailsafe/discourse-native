@@ -29,7 +29,7 @@ concessions:
 The Windows runner/CI, shared-encoder Dart controls and native bridge, and
 GPU/NVENC/passthrough source overlay are implemented. The custom Windows
 `libwebrtc.dll` builds in CI (including the C++ unit tests) and is published as
-`discourse.m150.7871.07.5`; its SHA-256 is pinned in `libwebrtc_version.ini`.
+`discourse.m150.7871.07.6`; its SHA-256 is pinned in `libwebrtc_version.ini`.
 The Windows app builds in CI.
 
 **Phase 2 is only partly accepted.** The native pipeline has been run on a GPU,
@@ -145,7 +145,7 @@ Done when the app runs on our build with no change in behaviour.
   `webrtc-sdk/webrtc` `m150_release` commit. (`m150_release` is not a branch in
   the wrapper repository.)
 - [x] Build `libwebrtc.dll` (x64) in CI and point `libwebrtc_version.ini` at
-  our release (`discourse.m150.7871.07.5`, SHA-256 pinned). The `windows-bundle` CI job builds the
+  our release (`discourse.m150.7871.07.6`, SHA-256 pinned). The `windows-bundle` CI job builds the
   app against it and checks the shared-screen export.
 - [x] Document the fork in `PATCHES.md` and extend the provenance check.
 
