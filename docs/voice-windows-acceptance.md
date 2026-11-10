@@ -253,6 +253,7 @@ design works; they say nothing about 5090 headroom.
 | Independent decode | `ffprobe`: H.264 High, level 5.1, 3840×1080, 600 frames. `ffmpeg` decoded the whole stream without errors. |
 | Real capture into NVENC (`capture_encode_test`): DXGI duplication of the 7680×2160 display → 3840×1080 at 60 fps | 600 frames in 10.08 s = 59.5 fps, 0 capture errors, 5 key frames, SPS `640033`, 1 NVENC session (encoder 70%). Decoded frames show the moving test content. |
 | **Three peers through the real DLL (`shared_screen_peers_test`)**, 20 s | All three negotiated `H264 640033 packetization-mode 1`. All three receivers decoded **3840×1080 at 59.8 to 59.9 fps** (steady state). `nvidia-smi`: **exactly one NVENC session**. Sender stats: encoder `SharedNVENC`, 3840×1080, 60 fps, no quality limitation, never rescaled. |
+| **A peer that cannot keep up** (peer 0 capped at 300 kbps against a stream of about 2 Mbps; 3 peers) | Peer 0 fell from 60 fps to 11 fps on average, with two full seconds at zero frames while it waited for a key frame. When the cap was lifted it was back at 59 fps within three seconds. **The other two peers stayed at 59.9 fps the whole time** and the encoder kept one session. (A 2 Mbps cap did not bite because the animation only needs about 2 Mbps; this is a real drop-and-recover, not a simulation.) |
 | A viewer leaves mid-stream | The other two receivers stayed at 59.9 fps before and after. |
 | A viewer joins late | The fourth viewer's first frame arrived 1842 ms after joining (key frame interval 2 s). Still one NVENC session with four peers. |
 | Teardown, five full create/destroy cycles | 71 to 83 ms each, no crash, and the NVENC session count was back to 0 after every cycle. |
@@ -292,7 +293,7 @@ enumeration failure ends the list), released as `discourse.m150.7871.07.5`.
 - The Flutter layer: `MeshVoiceMediaSession`, the preset picker and the
   placeholder were not run on this machine. These tests drive the native API
   directly, the way the plugin does.
-- Receivers dropping frames under real loss (a viewer leaving and a late
-  joiner were tested, not a stalled one) and the exact first recovery key frame.
+- Packet loss on the network (the starved peer above is bandwidth-driven, not
+  random loss) and the exact first recovery key frame.
 - Windows HDR, rotated monitors, a monitor picker (none exists yet), the
   software-encoding baseline cases A and B.

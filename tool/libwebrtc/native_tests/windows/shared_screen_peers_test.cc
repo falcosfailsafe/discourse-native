@@ -80,6 +80,9 @@ struct Options {
   int iterations = 1;
   int late_join_at = -1;   // seconds into the run
   int drop_peer_at = -1;
+  int throttle_at = -1;    // seconds: cap peer 0's bitrate far below the stream's
+  int unthrottle_at = -1;  // seconds: lift the cap again
+  int throttle_kbps = 2000;
   bool software = false;
   std::string log_filter;  // print libwebrtc log lines containing this text
   std::string json_path = "shared_screen_peers.json";
@@ -417,6 +420,23 @@ class Harness {
     return raw;
   }
 
+  // Sets one viewer's bitrate limits the way the app does (connection-level
+  // bandwidth estimate plus the sender's encoding limit).
+  bool LimitPeer(Peer* p, long long min_bps, long long start_bps, long long max_bps) {
+    char err[256] = {};
+    if (!LibWebRTCSharedScreenSetPeerBitrate(p->send.get(), static_cast<int>(min_bps),
+                                             static_cast<int>(start_bps),
+                                             static_cast<int>(max_bps), err, sizeof(err))) {
+      std::printf("    SetPeerBitrate failed: %s\n", err);
+      return false;
+    }
+    auto params = p->transceiver->sender()->parameters();
+    auto encodings = params->encodings();
+    for (size_t i = 0; i < encodings.size(); ++i) encodings[i]->set_max_bitrate_bps(static_cast<int>(max_bps));
+    params->set_encodings(encodings);
+    return p->transceiver->sender()->set_parameters(params);
+  }
+
   bool WaitConnected(Peer* p, int seconds) {
     const auto deadline = clk::now() + std::chrono::seconds(seconds);
     while (clk::now() < deadline) {
@@ -520,6 +540,9 @@ int main(int argc, char** argv) {
     else if (arg("--iterations")) opt.iterations = std::atoi(argv[++i]);
     else if (arg("--late-join-at")) opt.late_join_at = std::atoi(argv[++i]);
     else if (arg("--drop-peer-at")) opt.drop_peer_at = std::atoi(argv[++i]);
+    else if (arg("--throttle-peer-at")) opt.throttle_at = std::atoi(argv[++i]);
+    else if (arg("--unthrottle-at")) opt.unthrottle_at = std::atoi(argv[++i]);
+    else if (arg("--throttle-kbps")) opt.throttle_kbps = std::atoi(argv[++i]);
     else if (arg("--json")) opt.json_path = argv[++i];
     else if (arg("--log-filter")) opt.log_filter = argv[++i];
     else if (std::strcmp(argv[i], "--software") == 0) opt.software = true;
@@ -653,6 +676,16 @@ int main(int argc, char** argv) {
               "utilization.gpu --format=csv,noheader 2>&1");
           std::printf("nvidia-smi at %d s: %s\n", s, smi.c_str());
         }
+        if (opt.throttle_at == s && !h.peers_.empty()) {
+          std::printf("t=%d s: capping peer 0 at %d kbps (the stream needs ~%d)\n", s,
+                      opt.throttle_kbps, opt.kbps);
+          h.LimitPeer(h.peers_[0].get(), 0, static_cast<long long>(opt.throttle_kbps) * 1000,
+                      static_cast<long long>(opt.throttle_kbps) * 1000);
+        }
+        if (opt.unthrottle_at == s && !h.peers_.empty()) {
+          std::printf("t=%d s: lifting the cap on peer 0\n", s);
+          h.LimitPeer(h.peers_[0].get(), resolved.bitrate_bps, resolved.bitrate_bps, resolved.bitrate_bps);
+        }
         if (opt.drop_peer_at == s && !dropped && !h.peers_.empty()) {
           std::printf("t=%d s: closing peer 0 (viewer leaves)\n", s);
           h.ClosePeer(h.peers_[0].get());
@@ -716,6 +749,29 @@ int main(int argc, char** argv) {
                       late_first_ms, opt.keyframe_seconds);
           verdict.Check(late_first_ms <= (opt.keyframe_seconds + 3) * 1000,
                         "late viewer starts within a key frame interval + handshake");
+        }
+        if (opt.throttle_at > 0 && fps_series.size() > 2) {
+          auto avg = [&](size_t peer, int from_s, int to_s) {
+            double sum = 0; int n = 0;
+            const auto& v = fps_series[peer];
+            for (int t = from_s; t <= to_s && t <= static_cast<int>(v.size()); ++t) { sum += v[t - 1]; ++n; }
+            return n ? sum / n : 0.0;
+          };
+          const int th = opt.throttle_at, un = opt.unthrottle_at > 0 ? opt.unthrottle_at : opt.seconds;
+          const double p0_before = avg(0, 4, th), p0_during = avg(0, th + 2, un), p0_after = avg(0, un + 6, opt.seconds);
+          std::printf("  throttled peer 0: before %.1f fps, while capped %.1f fps, after the cap is lifted %.1f fps\n",
+                      p0_before, p0_during, p0_after);
+          for (size_t i = 1; i < static_cast<size_t>(opt.receivers); ++i) {
+            const double before = avg(i, 4, th), during = avg(i, th + 2, un);
+            std::printf("  peer %zu: before %.1f fps, while peer 0 is capped %.1f fps\n", i, before, during);
+            verdict.Check(during >= before * 0.9, "peer " + std::to_string(i) + " unaffected while peer 0 is starved");
+          }
+          std::printf("  (the cap %s: peer 0 dropped to %.0f%% of its normal rate)\n",
+                      p0_during < p0_before * 0.85 ? "bit" : "did not bite", p0_before ? 100.0 * p0_during / p0_before : 0.0);
+          if (opt.unthrottle_at > 0) {
+            verdict.Check(p0_after >= p0_before * 0.8, "peer 0 recovers to its normal rate after the cap is lifted");
+          }
+          verdict.Check(h.peers_[0]->renderer.frames_ > 0, "peer 0 kept receiving some video while capped");
         }
         if (dropped) {
           // the others must not have noticed: compare each remaining peer's rate before/after

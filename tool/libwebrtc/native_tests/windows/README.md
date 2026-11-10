@@ -14,6 +14,7 @@ with the C++ workload. Exit code 0 means every check passed.
 | --- | --- | --- |
 | `nvenc_smoke_test.exe` | Hardware H.264 encoding works: a synthetic 7680x2160 picture is scaled to 3840x1080 on the GPU and encoded through the real `NvencH264Encoder`. Checks the SPS profile/level, key frame interval, frame rate and the NVENC session count, and writes the stream for ffprobe/ffmpeg. | No |
 | `capture_encode_test.exe` | The real DXGI desktop capture feeding the real NVENC wrapper (the shared screen pipeline without libwebrtc). With `--expect-no-display` it asserts that a missing display is reported as an error, not a crash. | Yes (not for `--expect-no-display`) |
+| `shared_screen_peers_test.exe` | The Phase 2 acceptance at the native layer, through the real `libwebrtc.dll`: creates the shared source as the plugin does, negotiates H.264 High 5.1 with N loopback peers, measures what every receiver decodes, checks for exactly one NVENC session, and covers `--drop-peer-at` (a viewer leaves), `--late-join-at`, `--throttle-peer-at/--unthrottle-at/--throttle-kbps` (a peer that cannot keep up must freeze and recover without disturbing the others), `--iterations` (repeated teardown), the closed-connection accessors, and `--software` (ordinary encoder). Build it with `-WebRtcRelease <unzipped libwebrtc release dir>`. | Yes (not for `--software`) |
 | `shared_screen_probe.exe <libwebrtc.dll>` | Loads the DLL the way the Flutter plugin does and calls the shared-screen API. Must never crash; reports `available` and a reason. | No |
 | `display_tool.exe` | Lists GDI displays, attaches a monitor to the desktop and sets its mode. | Yes |
 
@@ -49,3 +50,9 @@ driver:
 
 The virtual monitor must be 8-bit SDR; the capture refuses HDR and rotated
 displays.
+
+Notes for the peers test: it initialises Winsock itself (libwebrtc does not;
+the Flutter runtime does that for the app) and must be built with
+`RTC_DESKTOP_DEVICE` and `LIB_WEBRTC_API_DLL` like the plugin, which the build
+script does. Windows Firewall may block a new program's inbound UDP; allow it
+if peers fail to connect (`New-NetFirewallRule ... -Program <exe>`).
