@@ -11,6 +11,11 @@ on:
         description: 'Run Windows format, analyze and bundle verification only'
         type: boolean
         default: false
+      windows_mode:
+        description: 'Windows bundle build mode (debug or release)'
+        type: choice
+        options: [debug, release]
+        default: debug
 
 permissions:
   contents: read
@@ -226,7 +231,7 @@ jobs:
 
       - name: Build Windows bundle
         working-directory: C:/w
-        run: flutter build windows --debug -v 2>&1 | tee /c/build.log
+        run: flutter build windows --${{ inputs.windows_mode || 'debug' }} -v 2>&1 | tee /c/build.log
 
       - name: Show native build logs on failure
         if: failure()
@@ -240,7 +245,8 @@ jobs:
         working-directory: C:/w
         run: |
           set -euxo pipefail
-          bundle=build/windows/x64/runner/Debug
+          mode='${{ inputs.windows_mode || 'debug' }}'
+          bundle=build/windows/x64/runner/${mode^}
           test -f "$bundle/discourse_native.exe"
           test -f "$bundle/flutter_windows.dll"
           # Voice's WebRTC plugin and the pinned custom libwebrtc it bundles.
