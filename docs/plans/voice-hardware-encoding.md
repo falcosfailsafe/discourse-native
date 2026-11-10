@@ -44,8 +44,10 @@ recovering at a key frame while the others are unaffected, and a clean teardown
   path was exercised only as a plain software encode plus teardown);
 - "no CPU frame copies" is by construction (the frames never leave the GPU) and
   was not measured;
-- the Flutter layer (`MeshVoiceMediaSession`, the picker, the placeholder) has
-  never been run on Windows.
+- the Flutter UI (the preset picker, the placeholder tile, the 32:9 layout) has
+  never been run on Windows. The session class `MeshVoiceMediaSession` has: it
+  shared to three viewers through NVENC and fell back correctly (see the
+  acceptance doc).
 
 - Build recipe, immutable source pins and fork instructions:
   [`tool/libwebrtc/README.md`](../../tool/libwebrtc/README.md).

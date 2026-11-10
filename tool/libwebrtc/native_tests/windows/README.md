@@ -56,3 +56,19 @@ the Flutter runtime does that for the app) and must be built with
 `RTC_DESKTOP_DEVICE` and `LIB_WEBRTC_API_DLL` like the plugin, which the build
 script does. Windows Firewall may block a new program's inbound UDP; allow it
 if peers fail to connect (`New-NetFirewallRule ... -Program <exe>`).
+
+## The Flutter session driver
+
+`integration_test/voice_windows_hardware_driver.dart` runs the real
+`MeshVoiceMediaSession` with the real plugin and DLL (see its header). It is
+not a `flutter test`; build it as an app and run it in the console session:
+
+```powershell
+flutter build windows --release --target integration_test/voice_windows_hardware_driver.dart
+# then, from the console session (run_in_console.ps1 from SSH):
+build\windows\x64\runner\Release\discourse_native.exe
+```
+
+Results go to `VOICE_DRIVER_LOG` (default `C:\setup\voice_driver.log`) and the
+exit code is 0 only if every check passed. Start `animate.ps1` first so the
+display has motion, and make the virtual display the primary monitor.

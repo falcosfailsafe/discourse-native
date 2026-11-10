@@ -261,6 +261,30 @@ design works; they say nothing about 5090 headroom.
 | `GetCapabilities` in a session with no display (SSH), on the real DLLs | `.4`: crash `0xC0000005`. `.5`: `available: 0, reason: no attached display matches screen id ''`, exit 0. |
 | Software sender through the same harness | Two receivers decoded 30 fps and teardown was clean. This used a custom source with default negotiation (VP8, libwebrtc downscaled to 480×270), so it covers the fallback plumbing and teardown, **not** software H.264 High. |
 
+### The Flutter session layer (`integration_test/voice_windows_hardware_driver.dart`)
+
+The real `MeshVoiceMediaSession` (the Dart class the app uses), the real
+`flutter_webrtc` plugin and the pinned `.5` DLL, run in one process: a sender
+and three viewers joined by an in-memory signaling bus, with the sender on the
+7680×2160 virtual display. It is built as a Release app and run in the console
+session; it writes its results to a log file. **All 38 checks passed.**
+
+| Check | Result |
+| --- | --- |
+| Capability and preview | The sender reports the shared encoder available, the self-preview is replaced by the "You're sharing" placeholder (`screenSharePreviewHidden`), and no viewer was refused the shared stream (`screenShareUnsupportedPeerIds` empty). |
+| Three viewers, `halfSource60` preset | Each viewer decoded **3840×1080 at 60.2, 60.5 and 59.9 fps**. Sender statistics: encoder `SharedNVENC`, 3840 wide, no quality limitation. `nvidia-smi`: exactly **one** NVENC session. |
+| A viewer leaves (roster change plus session dispose, the app's peer-removal path) | The other two stayed at 60.2 fps (60.3 before). Still one session. No crash. |
+| Stop and restart the share, three rounds | Each stop released the NVENC session (0 after 3 s); each restart came back at 60.0 to 60.6 fps with one session. |
+| Whole room torn down | Zero NVENC sessions afterwards. |
+| Sender **without** the hardware encoder (capability faked as unavailable) | The session kept today's path: ordinary screen capture, self-preview kept, viewers decoded 27 fps, encoder `OpenH264`, no NVENC session, clean teardown. The capture took the 800×600 Basic Display, so this shows the fallback works, not a quality number. |
+
+Harness notes: the session ignores signals from participants it has not synced
+yet, so the bus holds signals until every member has the roster; ICE candidates
+are batched as `{'events': [...]}` and the bus delivers them one by one as the
+real signaling layer does; only the sender publishes (receive-only transceivers
+cannot send); the machine has no microphone, so the sender's microphone request
+fails at once and the roster sync creates the peers.
+
 ### Bug found and fixed on this machine
 
 `LibWebRTCSharedScreenGetCapabilities` crashed with `0xC0000005` whenever the
@@ -293,9 +317,9 @@ the bundled DLL.
 ### Not covered
 
 - The RTX 5090, 240 Hz, and any other GPU.
-- The Flutter layer: `MeshVoiceMediaSession`, the preset picker and the
-  placeholder were not run on this machine. These tests drive the native API
-  directly, the way the plugin does.
+- The Flutter **UI**: the session class was run (above), but not the preset
+  picker widget, the placeholder tile, the 32:9 tile layout, or the app against
+  a real Discourse site and signaling server.
 - Packet loss on the network (the starved peer above is bandwidth-driven, not
   random loss) and the exact first recovery key frame.
 - Windows HDR, rotated monitors, a monitor picker (none exists yet), the

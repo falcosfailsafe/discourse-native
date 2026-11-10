@@ -59,6 +59,10 @@ class _Room {
   final Future<rtc.SharedScreenEncoderCapabilities> Function()?
   sharedCapabilities;
   final Map<int, _Member> members = {};
+  // A session ignores signals from participants it has not synced yet, so
+  // signals wait here until every member has the roster.
+  bool _open = false;
+  final List<Future<void> Function()> _held = [];
 
   List<VoiceParticipant> get _participants => [
     for (final id in ids)
@@ -92,16 +96,44 @@ class _Room {
       final session = MeshVoiceMediaSession(
         join: _join(),
         localUserId: id,
-        audioPublishingAllowed: false,
+        // Only the sender publishes: a recv-only transceiver cannot send, so
+        // the session would never carry the share. There is no microphone on
+        // this machine, so opening one fails at once and the roster sync below
+        // creates the peers anyway.
+        audioPublishingAllowed: id == ids.first,
+        getUserMedia: (_) async => throw StateError('no microphone here'),
         sendSignal: (recipient, event) async {
+          // The session batches ICE candidates as {'events': [...]}; the
+          // signaling layer delivers them one by one, so do the same.
+          final batch = event['events'];
+          final signals = batch is List
+              ? [for (final e in batch) Map<String, dynamic>.from(e as Map)]
+              : [Map<String, dynamic>.from(event)];
+          Future<void> deliver() async {
+            final target = members[recipient];
+            if (target == null || target.gone) return;
+            for (final signal in signals) {
+              try {
+                await target.session.handleSignal(id, signal);
+              } catch (error) {
+                _log(
+                  'signal $id -> $recipient (${signal['type']}) threw: $error',
+                );
+              }
+            }
+          }
+
+          for (final signal in signals) {
+            if (signal['type'] != 'candidate') {
+              _log('signal $id -> $recipient: ${signal['type']}');
+            }
+          }
           // Deliver on a later turn so a signal never re-enters its sender.
-          unawaited(
-            Future<void>.delayed(Duration.zero, () async {
-              final target = members[recipient];
-              if (target == null || target.gone) return;
-              await target.session.handleSignal(id, {...event});
-            }),
-          );
+          if (_open) {
+            unawaited(Future<void>.delayed(Duration.zero, deliver));
+          } else {
+            _held.add(deliver);
+          }
         },
         createPeerConnection: (configuration) async {
           final peer = await rtc.createPeerConnection(configuration);
@@ -115,10 +147,40 @@ class _Room {
       members[id] = _Member(id, session, peers);
     }
     for (final member in members.values) {
-      await member.session.connect();
+      try {
+        await member.session.connect();
+      } catch (error) {
+        _log(
+          'member ${member.id} connect: $error (expected for the sender: no microphone)',
+        );
+      }
     }
     for (final member in members.values) {
       await member.session.syncParticipants(_participants);
+    }
+    _open = true;
+    for (final deliver in _held) {
+      unawaited(Future<void>.delayed(Duration.zero, deliver));
+    }
+    _held.clear();
+  }
+
+  /// Logs each peer connection's state and, for the first one, the kinds of
+  /// statistics it reports, so a failure can be told from a harness problem.
+  Future<void> diagnose(String label) async {
+    for (final member in members.values.where((m) => !m.gone)) {
+      for (var i = 0; i < member.peers.length; i++) {
+        final peer = member.peers[i];
+        try {
+          final reports = await peer.getStats();
+          final kinds = <String>{for (final r in reports) r.type};
+          _log(
+            '$label: member ${member.id} peer $i state=${peer.connectionState} ice=${peer.iceConnectionState} stats=${reports.length} types=${kinds.join(",")}',
+          );
+        } catch (error) {
+          _log('$label: member ${member.id} peer $i stats error: $error');
+        }
+      }
     }
   }
 
@@ -223,6 +285,7 @@ Future<void> _sharedScenario() async {
     'the self-preview is replaced by the "You\'re sharing" placeholder',
   );
   await _wait(8);
+  await room.diagnose('after share start');
   _check(
     sender.session.screenShareUnsupportedPeerIds.isEmpty,
     'no viewer was refused the shared stream (unsupported: ${sender.session.screenShareUnsupportedPeerIds})',
