@@ -114,3 +114,84 @@ The [baseline](voice-windows-baseline.md) tables contain measured call results
 only. No timed runs with the stock libwebrtc build were completed at either
 resolution. The local smoke used the pinned DLL, colocated receivers and
 no timed motion workload.
+
+## Follow-up with `discourse.m150.7871.07.3`
+
+The 2026-11-09 local Release build used app revision `4e4d2c7cb`. The
+Windows plugin symlink check still required the local NTFS junction and
+CMake workaround. CMake downloaded the new ZIP, whose SHA-256 matched
+`92f4d7f0cc6a2bee9f834179b5c780c90e8a6c145c0290e2badf8ca0bfe01253`.
+The bundled DLL exported the shared-screen API and matched the DLL in
+that archive, with SHA-256
+`928f3750de53ffe68a5eb47f9b3e32b3a76d494e450f0193c8bb0a054ed091c1`.
+The archive identifies fork revision `4a888ed583ca83c4631de2645d5340cda45646cd`.
+
+The host was the same RTX 5090 with driver 621.01 and the High performance
+power plan. Windows DisplayConfig reported 7680×2160 at 240 Hz, HDR off
+and Wide Color Gamut (WCG) on. With WCG on, the DXGI probe observed
+`DXGI_FORMAT_R16G16B16A16_FLOAT` for both the descriptor and the acquired
+texture. A separate explicit BGRA8 duplication request returned
+`DXGI_ERROR_UNSUPPORTED` (`0x887a0004`). With approval, WCG was temporarily
+disabled for the SDR hardware runs. The descriptor and texture then both
+reported BGRA8. HDR remained off and the original WCG setting was restored.
+
+The original `.3` app connected to three simulated receivers and opened
+NVENC. Native video senders negotiated H.264 High 5.1, but Voice still had
+the parameters from transceiver creation, so it rejected all three
+receivers. Refreshing the sender reached the next check. libwebrtc then
+refused the sender limits when the bridge round-tripped an empty
+scalability mode as a named mode. App commit `286768011` refreshes the sender and
+omits the empty value. All 29 targeted media tests passed and the one
+off-Windows test was skipped.
+
+### SDR mesh results
+
+The first test after the app fix used one process for one sender and three
+simulated receivers. All 12 peer-connection endpoints connected. The
+sender attached the track to all three receivers and each decoded
+3840×1080 H.264 High 5.1. WebRTC reported 59–60 fps for the outbound
+passthrough encoders during the sampled part of the run, and NVIDIA
+reported one session. Receivers decoded 187, 186 and 187 frames total
+before stalling while packet-loss counters rose and sender encoding
+continued.
+
+The second test used the same app fix and `.3` with one sender and three
+simulated receivers in four separate processes. All processes ran on the
+same Windows host. No physical remote receiver machines were used.
+
+| Phase 2 check | Result | Evidence |
+| --- | --- | --- |
+| 1. 3840×1080 at 60 fps, H.264 High 5.1, to three receivers | Pass in the separate-process run | Three receivers decoded at 59.94, 59.97 and 59.97 fps over the measured counter windows. RTP stats showed 3840×1080, `video/H264`, and `profile-level-id=640033` for all three, with zero RTP packets lost in this run. |
+| 2. Exactly one shared NVENC session | Pass | `nvidia-smi encodersessions` showed session 107 for sender PID 12652 at 3840×1080 H.264. All 23 active telemetry samples showed one session. |
+| 3. GPU capture and scaling with no raw CPU frame copies | GPU path verified from source and runtime. No independent memory trace. | Capture converts into D3D11 NV12 textures with the video processor and passes those textures to NVENC. The unpaused sender averaged 1.85% machine CPU (maximum 2.37%) and the GPU video encoder averaged 9.65% utilization (maximum 12%). |
+| 4. One paused peer freezes and recovers on the next keyframe | Pause and recovery pass. Exact recovery keyframe unverified. | Receiver 2 was suspended for 5.386 seconds. The other two averaged 59.90 and 59.93 fps in that run. After resume, receiver 2 initially decoded more frames with its keyframe counter unchanged, then recorded two additional keyframes in the next sample. The counters cannot distinguish frames queued before suspension from the first live recovery frame. |
+| 5. Software fallback when NVENC is unavailable | Pass with shared encoding unavailable in the test | Forced unavailable capability with `.3` delivered software video to all three receivers. The stock DLL with no shared encoder also completed six timed software runs in separate processes. A physical non-NVIDIA machine was unavailable. |
+| 6. “You're sharing” placeholder while the shared encoder is active | Pass in app state and widget checks | The live media session reported a withheld preview during the shared run. The targeted widget test renders the placeholder for that state. |
+| 7. Upload hint for each preset | Pass in widget checks | With two viewers the displayed values were 20, 32 and 50 Mbps for 720p60, 1080p60 and half-source 60 fps. |
+
+Both separate-process runs stopped the share and disposed all four clients
+with exit code zero. The single-process teardown failure below remains
+reproducible.
+
+### Teardown with the published DLL
+
+| Scenario | Last completed action | Outcome |
+| --- | --- | --- |
+| Forced software fallback, three simulated receivers in one process | All receivers decoded video and share stop returned | Crash during sender disposal |
+| Shared capture active, before the admission fix | NVENC was active and sender disposal began | Crash during sender disposal |
+| Shared capture after the admission fix | All receivers decoded video and share stop returned | Crash during sender disposal |
+| Connected SDR mesh with no share | Removing one peer began | Crash during peer removal |
+
+ProcDump captured minidumps. The exception stream in each of the above
+showed `0xc0000005`, a read at address zero, at
+`libwebrtc.dll+0x218f7`. This reproduces the fault without any share
+having started. Share stop itself returned in the stop scenarios.
+The released archive does not include the matching PDB. The DLL's
+CodeView record identifies `libwebrtc.dll.pdb`, GUID
+`7F0BEFFE-36BD-F5D4-4C4C-44205044422E`, age 1.
+
+### Timed software baseline
+
+All six stock software runs completed and are recorded in
+[the baseline tables](voice-windows-baseline.md). Raw CPU and WebRTC logs
+are kept with the test evidence.

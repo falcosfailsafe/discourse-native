@@ -14,8 +14,8 @@ platform, or from a different build. Prefer a blank over a guess.
 | Item | State |
 | --- | --- |
 | Windows runner and CI build | CI builds the debug bundle. A local x64 Release bundle built successfully against the pinned custom DLL on 2026-11-09. See the [acceptance report](voice-windows-acceptance.md). |
-| Mesh call with screen share verified on Windows | See the local diagnostic and shared-capture blocker in the [acceptance report](voice-windows-acceptance.md). |
-| Baseline runs | No timed runs completed for cases A or B. |
+| Mesh call with screen share verified on Windows | Three simulated receivers decoded video with the published .3 DLL and the app admission fix. See the [acceptance report](voice-windows-acceptance.md). |
+| Baseline runs | 6 of 6 timed runs produced complete CPU and WebRTC measurements. |
 
 ## Prerequisites
 
@@ -119,12 +119,38 @@ Fill in from the run records. Leave `—` for anything not measured.
 
 | Case | Peers | CPU mean (% of machine) | CPU p95 | Sent fps | Received fps | Resolution sent | Limit reason |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| A, 1080p source | — | — | — | — | — | — | — |
-| B, 7680×2160 source | — | — | — | — | — | — | — |
+| A, 1080p source | 3 simulated | 3.74 (3.49–3.85) | 5.01 (4.91–5.31) | 28.29 (28.29–28.30) | 28.27 (28.27–28.27) | 960×540 | bandwidth |
+| B, 7680×2160 source | 3 simulated | 7.38 (6.89–7.65) | 8.67 (8.49–8.76) | 17.81 (17.78–18.68) | 17.82 (17.77–18.67) | 1920×540, 2560×720 | bandwidth |
 
-Measured on: —. Commit: —.
+Measured on 2026-11-09 with a Ryzen 7 5800X3D, 32 GB RAM, GeForce RTX
+5090, NVIDIA driver 621.01, Windows 11 Pro x64 build 26300.9711 and the
+High performance power plan. Both source resolutions ran at 240 Hz with
+HDR off and Wide Color Gamut on. Game Mode was not independently verified.
 
-The 2026-11-09 RTX 5090 session did not include the three timed stock-libwebrtc runs at either resolution. The local Release diagnostic used simulated receivers in the sender process and is recorded separately in the [acceptance report](voice-windows-acceptance.md).
+The Release diagnostic used the app at `4e4d2c7cb` with a local
+shared-sender admission change and a temporary stats entry point. It
+loaded the stock Windows `libwebrtc.m150.7871.07` DLL from its upstream
+release in an isolated bundle. One sender and three simulated receivers
+ran in four separate processes on the same host. There were no remote
+physical receiver machines. The sender process was sampled by the repo
+script after 30 seconds of warmup. A fullscreen FFplay `testsrc2` pattern
+configured for 60 fps played at 960×540 for case A and 1920×540 for case
+B, scaled to fill the source display.
+
+Each result above is the median with the observed run range in parentheses.
+For each run, sent and received fps are the medians of three RTP counter
+rates. Counters were paired with the nearest stats samples to the CPU
+measurement window. Resolution lists every outbound size in the valid
+windows. Limit reason is the most frequent sampled reason.
+
+| Run | CPU mean (%) | CPU p95 (%) | CPU max (%) | Sent fps | Received fps | Outbound size | Limit reason |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| caseA-run1 | 3.49 | 4.91 | 5.46 | 28.29 | 28.27 | 960×540 | bandwidth |
+| caseA-run2 | 3.74 | 5.01 | 5.58 | 28.29 | 28.27 | 960×540 | bandwidth |
+| caseA-run3 | 3.85 | 5.31 | 5.86 | 28.30 | 28.27 | 960×540 | bandwidth |
+| caseB-run1 | 7.65 | 8.67 | 9.64 | 17.78 | 17.77 | 2560×720 | bandwidth |
+| caseB-run2 | 7.38 | 8.76 | 9.42 | 17.81 | 17.82 | 2560×720 | bandwidth |
+| caseB-run3 | 6.89 | 8.49 | 8.87 | 18.68 | 18.67 | 1920×540, 2560×720 | bandwidth |
 
 ## Limits of this method
 
