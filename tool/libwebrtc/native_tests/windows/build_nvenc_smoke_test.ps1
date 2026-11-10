@@ -2,6 +2,7 @@
 #   nvenc_smoke_test.exe   - NVENC hardware encode through the real wrapper
 #   capture_encode_test.exe - real DXGI capture -> NVENC (needs a display)
 #   display_tool.exe       - list/attach/set modes of GDI displays (virtual display setup)
+#   shared_screen_peers_test.exe - shared screen to several peers via libwebrtc.dll (-WebRtcRelease)
 #   shared_screen_probe.exe - loads libwebrtc.dll and reports its shared-screen API
 #
 #   powershell -File build_nvenc_smoke_test.ps1 [-Run] [test arguments]
@@ -10,6 +11,9 @@
 # <repo>\build\nvenc_smoke_test\. With -Run the smoke test runs afterwards and
 # its exit code is returned.
 param(
+  # A libwebrtc release directory (the unzipped libwebrtc-x64-release folder with
+  # include\ and lib\). When given, shared_screen_peers_test.exe is built too.
+  [string]$WebRtcRelease = '',
   [switch]$Run,
   [Parameter(ValueFromRemainingArguments = $true)]
   [string[]]$TestArgs
@@ -57,16 +61,30 @@ $targets = @(
      Sources = @((Join-Path $here 'shared_screen_probe.cc'))
      Libs = '' }
 )
+if ($WebRtcRelease) {
+  $wr = (Resolve-Path $WebRtcRelease).Path
+  $targets += @{ Name = 'shared_screen_peers_test'
+     Sources = @((Join-Path $here 'shared_screen_peers_test.cc'))
+     Libs = ((Q (Join-Path $wr 'lib\libwebrtc.dll.lib')) + ' user32.lib ws2_32.lib')
+     # These must match how the DLL and the Flutter plugin are built: the
+     # factory header has RTC_DESKTOP_DEVICE-dependent virtual functions, so a
+     # test built without it calls the wrong vtable slots and crashes.
+     Extra = ('/DLIB_WEBRTC_API_DLL /DRTC_DESKTOP_DEVICE /I' + (Q (Join-Path $wr 'include')) + ' /I' + (Q (Join-Path $wr 'include\base'))) }
+}
 foreach ($t in $targets) {
   $srcArgs = ($t.Sources | ForEach-Object { Q $_ }) -join ' '
   $objDir = Join-Path $out ($t.Name + '_obj')
   New-Item -ItemType Directory -Force $objDir | Out-Null
   $exe = Join-Path $out ($t.Name + '.exe')
-  $line = (Q $vcvars) + ' >nul && ' + $common + ' ' + $srcArgs +
+  $line = (Q $vcvars) + ' >nul && ' + $common + ' ' + $t.Extra + ' ' + $srcArgs +
           ' /Fo' + (Q ($objDir + '\\')) + ' /Fe' + (Q $exe) + ' ' + $t.Libs
   cmd /c $line
   if ($LASTEXITCODE -ne 0) { throw ('compile of ' + $t.Name + ' failed (' + $LASTEXITCODE + ')') }
   Write-Host ('built ' + $exe)
+}
+if ($WebRtcRelease) {
+  Copy-Item -Force (Join-Path $wr 'lib\libwebrtc.dll') $out
+  Write-Host ('copied libwebrtc.dll next to the test programs')
 }
 
 if ($Run) {

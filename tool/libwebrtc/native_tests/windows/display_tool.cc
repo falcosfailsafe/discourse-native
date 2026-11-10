@@ -90,6 +90,26 @@ int main(int argc, char** argv) {
     LONG r = ChangeDisplaySettingsExA(name, &dm, nullptr, flags, nullptr);
     std::printf("stage %s -> %ld\n", name, r);
     if (r != DISP_CHANGE_SUCCESSFUL) return 1;
+    if (primary) {
+      // Windows only honours a new primary when the old one is moved off
+      // (0,0): lay every other attached display out to the right of it.
+      long next_x = dm.dmPelsWidth;
+      DISPLAY_DEVICEA dd = {sizeof(dd)};
+      for (DWORD i = 0; EnumDisplayDevicesA(nullptr, i, &dd, 0); ++i) {
+        if (!(dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)) continue;
+        if (std::strcmp(dd.DeviceName, name) == 0) continue;
+        DEVMODEA other = {};
+        other.dmSize = sizeof(other);
+        if (!EnumDisplaySettingsA(dd.DeviceName, ENUM_CURRENT_SETTINGS, &other)) continue;
+        other.dmPosition.x = next_x;
+        other.dmPosition.y = 0;
+        other.dmFields |= DM_POSITION;
+        next_x += other.dmPelsWidth;
+        LONG rr = ChangeDisplaySettingsExA(dd.DeviceName, &other, nullptr,
+                                           CDS_UPDATEREGISTRY | CDS_NORESET, nullptr);
+        std::printf("reposition %s to x=%ld -> %ld\n", dd.DeviceName, other.dmPosition.x, rr);
+      }
+    }
     r = ChangeDisplaySettingsExA(nullptr, nullptr, nullptr, 0, nullptr);
     std::printf("apply -> %ld\n", r);
     return r == DISP_CHANGE_SUCCESSFUL ? 0 : 1;

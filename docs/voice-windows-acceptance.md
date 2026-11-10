@@ -203,8 +203,11 @@ mov rax, [rax+0x80]     ; virtual call on PeerConnectionInterface
 call rax                ; returns a vector, which the loop then walks
 ```
 
-That is `RTCPeerConnectionImpl::senders()` (`transceivers()` and
-`receivers()` have the same shape). `RTCPeerConnectionImpl::Close()` sets
+That is one of the vector accessors on `RTCPeerConnectionImpl`. The virtual
+slot called on the released object identifies which: `+0x78` is `GetSenders`
+(`senders()`, crash at `+0x211b7`), `+0x80` is `GetReceivers` (`receivers()`,
+the `+0x218f7` crash the Windows run recorded), and `transceivers()` is the
+next slot. They all have the same shape. `RTCPeerConnectionImpl::Close()` sets
 `rtc_peerconnection_ = nullptr`, but these accessors, the state getters and
 the Add/Remove/description methods dereferenced it unchecked. A caller that
 reaches the wrapper after `close()` faults, which is why it also reproduced
@@ -226,3 +229,70 @@ connection and may want its own guard.
 All six stock software runs completed and are recorded in
 [the baseline tables](voice-windows-baseline.md). Raw CPU and WebRTC logs
 are kept with the test evidence.
+
+## 2026-11-10: AWS GPU server (Tesla T4)
+
+A second machine, so these numbers are for a **T4, not the RTX 5090** reference
+sender, and a **60 Hz** virtual display, not the 240 Hz monitor. They show the
+design works; they say nothing about 5090 headroom.
+
+| Item | Observed |
+| --- | --- |
+| Machine | AWS `g4dn.2xlarge` (8 vCPU), Windows Server 2025 Datacenter |
+| GPU | Tesla T4, driver 596.86, WDDM, `nvEncodeAPI64.dll` present |
+| Display | [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) 25.7.23 (MIT, signed by the SignPath Foundation) as the primary monitor, **7680×2160 at 60 Hz**, SDR |
+| Session | A dedicated local user auto-logged-on at the console, tests started through a scheduled task with an Interactive logon (see `tool/libwebrtc/native_tests/windows/README.md`) |
+| libwebrtc | `discourse.m150.7871.07.4` (the bundled DLL's SHA-256 matched the verified release) |
+| Programs | `tool/libwebrtc/native_tests/windows/` |
+
+### Results
+
+| Check | Result |
+| --- | --- |
+| NVENC works, no display needed (`nvenc_smoke_test`): synthetic 7680×2160 → 3840×1080 at 60 fps, 25 Mbps | 600 frames in 10.19 s = 58.9 fps (59.2 fps in a second run), 22 Mbps, key frame every 2000 ms, SPS `640033`. GPU scale + convert 1.0 ms, encode 12.9 ms mean (p95 13.3). Unpaced: 119 fps. `nvidia-smi`: 1 NVENC session, encoder 72%. |
+| Independent decode | `ffprobe`: H.264 High, level 5.1, 3840×1080, 600 frames. `ffmpeg` decoded the whole stream without errors. |
+| Real capture into NVENC (`capture_encode_test`): DXGI duplication of the 7680×2160 display → 3840×1080 at 60 fps | 600 frames in 10.08 s = 59.5 fps, 0 capture errors, 5 key frames, SPS `640033`, 1 NVENC session (encoder 70%). Decoded frames show the moving test content. |
+| **Three peers through the real DLL (`shared_screen_peers_test`)**, 20 s | All three negotiated `H264 640033 packetization-mode 1`. All three receivers decoded **3840×1080 at 59.8 to 59.9 fps** (steady state). `nvidia-smi`: **exactly one NVENC session**. Sender stats: encoder `SharedNVENC`, 3840×1080, 60 fps, no quality limitation, never rescaled. |
+| A viewer leaves mid-stream | The other two receivers stayed at 59.9 fps before and after. |
+| A viewer joins late | The fourth viewer's first frame arrived 1842 ms after joining (key frame interval 2 s). Still one NVENC session with four peers. |
+| Teardown, five full create/destroy cycles | 71 to 83 ms each, no crash, and the NVENC session count was back to 0 after every cycle. |
+| Closed-connection regression, on the real DLLs | The harness closes a viewer and then calls `senders()`, `transceivers()`, `receivers()` and the state getters on it. `.3`: crash `0xC0000005` at `+0x211b7`. `.4`: passes. |
+| Software sender through the same harness | Two receivers decoded 30 fps and teardown was clean. This used a custom source with default negotiation (VP8, libwebrtc downscaled to 480×270), so it covers the fallback plumbing and teardown, **not** software H.264 High. |
+
+### Bug found and fixed on this machine
+
+`LibWebRTCSharedScreenGetCapabilities` crashed with `0xC0000005` whenever the
+session had no usable display (SSH, a service, a locked or disconnected
+desktop). `FindOutput` stopped enumerating only on `DXGI_ERROR_NOT_FOUND`;
+those sessions fail with `DXGI_ERROR_NOT_CURRENTLY_AVAILABLE` and leave the
+out pointer null, so `GetDesc` ran on null instead of reporting "unavailable"
+so the app falls back. Reproduced with a standalone harness and fixed (any
+enumeration failure ends the list), released as `discourse.m150.7871.07.5`.
+`capture_encode_test --expect-no-display` is the regression test.
+
+### Findings worth knowing
+
+- The capability probe always uses the **primary** monitor (`""`). If the
+  primary monitor belongs to another adapter (here the 800×600 Basic Display
+  adapter), the shared encoder reports unavailable even though the NVIDIA GPU
+  has a working display. The virtual display had to be made primary.
+- An RDP session cannot be captured on the GPU (the Remote Display Adapter is
+  not the NVIDIA adapter), and a service or SSH session has no outputs at all.
+  A headless GPU machine needs a virtual display and a console session.
+- libwebrtc opens sockets without calling `WSAStartup`; the Flutter runtime
+  does it for the app. A standalone process that does not gets only TCP
+  candidates and never connects.
+- A test that builds against the wrapper headers must define
+  `RTC_DESKTOP_DEVICE` and `LIB_WEBRTC_API_DLL` like the plugin does. Without
+  them the factory vtable is read two slots off and calls crash.
+
+### Not covered
+
+- The RTX 5090, 240 Hz, and any other GPU.
+- The Flutter layer: `MeshVoiceMediaSession`, the preset picker and the
+  placeholder were not run on this machine. These tests drive the native API
+  directly, the way the plugin does.
+- Receivers dropping frames under real loss (a viewer leaving and a late
+  joiner were tested, not a stalled one) and the exact first recovery key frame.
+- Windows HDR, rotated monitors, a monitor picker (none exists yet), the
+  software-encoding baseline cases A and B.
