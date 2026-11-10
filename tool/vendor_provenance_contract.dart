@@ -212,7 +212,11 @@ String _relativePath(Directory root, FileSystemEntity entity) {
   final rootPath = root.absolute.path.endsWith(Platform.pathSeparator)
       ? root.absolute.path
       : '${root.absolute.path}${Platform.pathSeparator}';
-  return entity.absolute.path.substring(rootPath.length);
+  // Repository-relative paths are logical identifiers, written with `/` in the
+  // catalogs and manifests, so they must not take Windows' backslashes.
+  return entity.absolute.path
+      .substring(rootPath.length)
+      .replaceAll(Platform.pathSeparator, '/');
 }
 
 Future<int> runVendorProvenanceContracts() async {

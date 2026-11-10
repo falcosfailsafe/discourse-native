@@ -31,6 +31,10 @@ VoiceJoinResponse join({
 );
 
 void main() {
+  // On Windows the session reaches the real flutter_webrtc plugin for the shared
+  // encoder probe, which needs a binding. Without a plugin the probe simply
+  // reports no encoder, as it does on the other platforms.
+  TestWidgetsFlutterBinding.ensureInitialized();
   _sharedScreenEncodingTests();
 
   test('stage listeners do not acquire an outgoing audio publication', () {

@@ -1288,7 +1288,7 @@ void main() {
           expect(find.byTooltip('Camera on'), findsOneWidget);
           expect(
             find.byTooltip('Share screen'),
-            (Platform.isMacOS || Platform.isLinux)
+            (Platform.isMacOS || Platform.isLinux || Platform.isWindows)
                 ? findsOneWidget
                 : findsNothing,
           );
