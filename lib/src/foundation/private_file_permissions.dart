@@ -73,6 +73,21 @@ Future<T> withPrivateAdvisoryFileLock<T>(
   Future<T> Function() operation,
 ) async {
   await ensurePrivateFile(file);
+  if (Platform.isWindows) {
+    // EXPERIMENT (Windows launch): libc open/flock do not exist on Windows. Dart's
+    // own lock is LockFileEx on a handle, which coordinates isolates and processes.
+    final handle = await file.open(mode: FileMode.append);
+    try {
+      await handle.lock(FileLock.blockingExclusive);
+      try {
+        return await operation();
+      } finally {
+        await handle.unlock();
+      }
+    } finally {
+      await handle.close();
+    }
+  }
   final nativePath = file.path.toNativeUtf8();
   final int descriptor;
   try {

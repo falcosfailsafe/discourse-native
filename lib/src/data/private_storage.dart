@@ -93,6 +93,26 @@ final class _PlatformPrivateStorage {
         legacyClientIds: storage,
       );
     }
+    if (Platform.isWindows) {
+      // EXPERIMENT (Windows launch), NOT FOR MERGE: a plaintext JSON file under
+      // %LOCALAPPDATA%. A real Windows store should encrypt with DPAPI and set an
+      // ACL; this only lets the app start so the rest of Windows can be tested.
+      final base =
+          Platform.environment['LOCALAPPDATA'] ??
+          Platform.environment['APPDATA'];
+      if (base == null || base.isEmpty) {
+        throw StateError('LOCALAPPDATA does not name a directory');
+      }
+      final storage = LinuxFileStorage(
+        directory: Directory('$base\\discourse-native'),
+      );
+      return _PlatformPrivateStorage(
+        credentials: storage,
+        enumerable: storage,
+        legacyApple: null,
+        legacyClientIds: storage,
+      );
+    }
     if (Platform.isIOS || Platform.isMacOS) {
       // The local macOS certificate has no provisioning profile/application
       // identifier, so it cannot use the Data Protection Keychain. Keep those
