@@ -163,6 +163,7 @@ int main(int argc, char** argv) {
 
   using clock = std::chrono::steady_clock;
   std::vector<double> encode_ms, tick_ms;
+  std::vector<double> frame_kb, key_kb;  // per access unit, in kilobits
   std::vector<int> keyframes;
   uint64_t bytes = 0;
   int encoded = 0, capture_errors = 0, idr_without_params = 0;
@@ -204,6 +205,7 @@ int main(int argc, char** argv) {
     }
     std::fwrite(au.data.data(), 1, au.data.size(), h264);
     bytes += au.data.size();
+    (au.is_keyframe ? key_kb : frame_kb).push_back(au.data.size() * 8.0 / 1000.0);
     ++encoded;
     if (n == opt.frames / 2) {
       smi = RunCommand(
@@ -225,6 +227,9 @@ int main(int argc, char** argv) {
   std::printf("encode mean %.2f ms p95 %.2f | tick mean %.2f ms p95 %.2f\n",
               Mean(encode_ms), Percentile(encode_ms, 0.95), Mean(tick_ms),
               Percentile(tick_ms, 0.95));
+  std::printf("frame size (kbit): P mean %.0f p95 %.0f max %.0f | key mean %.0f; target per frame %.0f\n",
+              Mean(frame_kb), Percentile(frame_kb, 0.95), Percentile(frame_kb, 1.0), Mean(key_kb),
+              opt.kbps / static_cast<double>(opt.fps));
   std::printf("keyframes %zu; SPS %s\n", keyframes.size(),
               sps.found ? sps.ProfileLevelId().c_str() : "MISSING");
 

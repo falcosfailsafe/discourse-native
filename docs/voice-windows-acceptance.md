@@ -285,6 +285,81 @@ real signaling layer does; only the sender publishes (receive-only transceivers
 cannot send); the machine has no microphone, so the sender's microphone request
 fails at once and the roster sync creates the peers.
 
+### Load, presets and display changes (same machine)
+
+Content: a GPU noise window on the 7680×2160 virtual display (8-pixel blocks,
+amplitude 0.2: heavy, constantly changing, but within what the encoder can
+control). Three peers unless stated. All through the real `libwebrtc.dll`
+(`.5`).
+
+| Check | Result |
+| --- | --- |
+| Does CBR hold the target on heavy content? (`capture_encode_test`, 25 Mbps target) | Yes: **24.2, 24.4, 24.0 and 22.4 Mbps** at noise amplitudes 0.05 to 0.4. P-frames averaged 407 to 414 kbit against 417 kbit per frame, key frames 450 to 770 kbit. |
+| Does it hold when content cannot be compressed? | No, and nothing could: with full-range white noise the slice QP is already 51 (the maximum) and a frame is still about 3.3 Mbit, so **195 Mbps at any target** (5, 25 and 100 Mbps gave the same). This is the limit of the codec, not a rate-control fault. |
+| What the network sees under that overload (3 peers) | libwebrtc holds each peer to the configured rate: **23.9 Mbps per peer**, so only 8 to 9 frames per second were delivered, with counted freezes and no crash and no upload beyond the cap. The share degrades to a slideshow, not to an upload spike. |
+| Sustained load, 3 peers, ~24 Mbps each, **90 s** | Sent 23.9 Mbps per peer, 71.8 Mbps in total. No quality limitation, no packet loss, no freezes. Process memory 224 to 250 MB, handles 565 to 572. |
+| **10-minute soak**, same load | RTP delivery **60.0 fps** to every viewer from the third minute on (56.8 in the first minute while ramping up, 59.3 in the second), 24.4 Mbps per peer, no quality limitation, no loss. GPU memory flat at 755 MiB, encoder 69 to 70%. Process memory plateaued around 255 MB (239 to 261 MB, no steady climb), handles 563 to 573. Teardown 114 ms, NVENC sessions 0. |
+| What one viewer's software decoder can do (3840×1080, 24 Mbps, worst-case content) | **1 viewer: 55 fps decoded** (RTP delivery 58.7, process CPU 17% of the machine, about 1.3 logical CPUs). 2 viewers: 54 fps. 3 viewers: 49.5 fps, at which point the process is CPU-bound (49%). The sender and the network were never the limit. This is the Phase 4 measurement. |
+| Presets and H.264 levels | 1920×1080 at 60 fps (1080p preset on a 1080p display): **60.0 fps**. 3840×1080 at 60 fps (1080p preset on 32:9): 58.2 fps. 2560×720 at 60 fps (720p preset): 57.7 fps. 3840×1080 at **30 fps**: 29.4 fps. 3840×2160 at 60 fps: encoded at level 5.2 (`640034`), 60.1 fps delivered, 35 fps decoded by one software decoder. All with a clean teardown. The 3 to 4% shortfall appeared only on the 7680×2160 display; a likely cause is the noise window rendering at that size on the same GPU, but that was not isolated. |
+| A resolution change under a live share (7680×2160 to 3840×2160 at 12 s) | The share **dies**: delivery fell to zero, the NVENC session closed, and every viewer froze on the last frame. No crash, and teardown took 12 ms. A fresh share worked immediately at the new size (1920×1080, 60 fps). The app is not told: nothing signals the failure, so it still believes it is sharing. |
+| Rotated display (90 degrees) | Refused: `rotated displays are not supported`, exit code 3 (so the app falls back). Available again once the rotation was undone. |
+| HDR on (Windows advanced color) | Refused: `the display uses HDR or a wide color space; screen share needs an SDR display`. Available again with HDR off. |
+
+#### Software versus shared NVENC at the same sizes
+
+One sender process and three viewers in a **separate** process, so the sender's
+CPU does not include the viewers' decoders. `integration_test/voice_windows_baseline_driver.dart`,
+three runs per cell (the software 1080p and 7680×2160 cells have six, see the
+note). CPU is the sender process as a percentage of all 8 logical CPUs, with
+cores in brackets.
+
+| Path | Display | Frames encoded | Picture sent | Sender CPU | Sent (3 peers) | Viewers decode |
+| --- | --- | --- | --- | --- | --- | --- |
+| Software (today) | 1920×1080 | 20.3 to 20.8 fps | 480×270 to 640×360 | 5.8 to 7.6% (0.47 to 0.61) | 1.7 Mbps | 21 fps |
+| **Shared NVENC** | 1920×1080 | **60.0 fps** | **1920×1080** | **4.0 to 5.0% (0.32 to 0.40)** | 15.0 Mbps | 61 fps |
+| Software (today) | 7680×2160 | 12.1 to 13.9 fps | 1280×360 to 2560×720 | **18.1 to 40.9% (1.44 to 3.27)** | 2.0 to 2.5 Mbps | 12.2 to 14.2 fps |
+| **Shared NVENC** | 7680×2160 | **60.0 fps** | **3840×1080** | **5.8 to 8.6% (0.47 to 0.69)** | 23.9 Mbps | 44 to 49 fps |
+
+The software path is held to about 2 Mbps by libwebrtc's default bandwidth
+estimate (every run reports `limit=bandwidth`), which is why it sends a tiny
+picture at 12 to 20 fps whatever the display. At 7680×2160 it also spends up to
+3.3 cores on capture and conversion to deliver 12 fps; the shared path delivers
+five times the frame rate at about a fifth of the CPU. Viewers at 7680×2160
+are the cost that remains: their software decoders use 3.6 to 3.9 cores for
+three viewers.
+
+Note on the runs: the first software matrix contained six runs per size
+because a second batch labelled "NVENC" had silently run the software path (see
+the capability-cache finding below), so the software cells have six samples.
+The NVENC rows come from a separate matrix in a fresh process with
+`hardware=true` confirmed in every row, encoder `SharedNVENC` in every row.
+
+### Findings from these runs
+
+1. **The encoder capability is cached forever (fixed in `.6`).**
+   `GetEncoderCapabilities` probed once per process. A probe made while the
+   display was rotated, in HDR, detached or mid-change stayed "unavailable" for
+   the life of the app, even after the display was fixed: reproduced with the
+   real DLL (rotated display, then restored: every later answer still said
+   `rotated displays are not supported`). It also made a whole benchmark
+   quietly run on the software path. A positive answer is now kept and a
+   negative one is re-probed after 3 seconds.
+2. **A display change kills a live share silently.** The pipeline stops, the
+   encoder is released, viewers freeze, and the app is not told. Recommended:
+   end the track (so the app sees it end) or restart the pipeline at the new
+   size. Not changed here.
+3. **The negotiated level can be lower than the stream's.** At 3840×2160 and
+   60 fps the stream is level 5.2 but the connection negotiated `640033`
+   (level 5.1). The app's admission check only requires 5.1 or above. No shipped
+   preset reaches level 5.2, and a software decoder decodes it regardless, but
+   a strict hardware decoder may not. The check should compare the negotiated
+   level with the one the preset needs.
+4. **The bitrate cap is a hard ceiling for upload.** Under overload libwebrtc
+   holds each peer to the preset rate and drops frames instead of exceeding it,
+   which is the behaviour the plan wants for a 300 Mbps link.
+5. **Receiver decode is the ceiling at 3840×1080.** One software decoder tops
+   out near 55 fps on worst-case content, three near 50.
+
 ### Bug found and fixed on this machine
 
 `LibWebRTCSharedScreenGetCapabilities` crashed with `0xC0000005` whenever the
@@ -322,5 +397,4 @@ the bundled DLL.
   a real Discourse site and signaling server.
 - Packet loss on the network (the starved peer above is bandwidth-driven, not
   random loss) and the exact first recovery key frame.
-- Windows HDR, rotated monitors, a monitor picker (none exists yet), the
-  software-encoding baseline cases A and B.
+- A monitor picker (none exists yet).

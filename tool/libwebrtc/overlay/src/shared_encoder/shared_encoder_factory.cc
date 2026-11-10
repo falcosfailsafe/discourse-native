@@ -1,6 +1,7 @@
 #include "shared_encoder_factory.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <mutex>
 #include <optional>
@@ -191,9 +192,25 @@ class SharedDecoderFactory : public webrtc::VideoDecoderFactory {
 
 }  // namespace
 
-const EncoderCapabilities& GetEncoderCapabilities() {
-  static const EncoderCapabilities caps = ProbeEncoderCapabilities();
-  return caps;
+EncoderCapabilities GetEncoderCapabilities() {
+  // A working encoder does not go away, so a positive answer is kept for the
+  // life of the process. A negative answer can be stale: the display may have
+  // been rotated, in HDR, detached or in the middle of a change when it was
+  // asked, and that must not switch hardware encoding off until the app is
+  // restarted. Ask again once the last negative answer is a few seconds old.
+  static std::mutex mutex;
+  static EncoderCapabilities cached;
+  static bool have = false;
+  static std::chrono::steady_clock::time_point probed;
+  constexpr auto kNegativeLifetime = std::chrono::seconds(3);
+  std::lock_guard<std::mutex> lock(mutex);
+  if (!have || (!cached.available &&
+                std::chrono::steady_clock::now() - probed >= kNegativeLifetime)) {
+    cached = ProbeEncoderCapabilities();
+    probed = std::chrono::steady_clock::now();
+    have = true;
+  }
+  return cached;
 }
 
 std::unique_ptr<webrtc::VideoEncoderFactory> CreateSharedEncoderFactory(

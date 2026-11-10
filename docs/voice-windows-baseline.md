@@ -152,6 +152,25 @@ windows. Limit reason is the most frequent sampled reason.
 | caseB-run2 | 7.38 | 8.76 | 9.42 | 17.81 | 17.82 | 2560×720 | bandwidth |
 | caseB-run3 | 6.89 | 8.49 | 8.87 | 18.68 | 18.67 | 1920×540, 2560×720 | bandwidth |
 
+## Second machine: Tesla T4 server, software versus shared NVENC
+
+A different machine and different content, so these numbers are **not**
+comparable with the RTX 5090 rows above; they compare the two paths with each
+other. AWS `g4dn.2xlarge` (8 logical CPUs, Tesla T4), Windows Server 2025, a
+60 Hz virtual display, GPU noise as the moving content, one sender process and
+one separate process for the three viewers (so the sender's CPU does not include
+the viewers' decoders). Procedure and the full table are in
+[voice-windows-acceptance.md](voice-windows-acceptance.md#software-versus-shared-nvenc-at-the-same-sizes).
+
+| Case | Path | Sender CPU (% of machine) | Frames encoded | Resolution sent | Limit reason |
+| --- | --- | --- | --- | --- | --- |
+| A, 1080p source | software, 6 runs | 5.8 to 7.6 | 20.3 to 20.8 fps | 480×270 to 640×360 | bandwidth |
+| A, 1080p source | shared NVENC, 3 runs | 4.0 to 5.0 | 60.0 fps | 1920×1080 | none |
+| B, 7680×2160 source | software, 6 runs | 18.1 to 40.9 | 12.1 to 13.9 fps | 1280×360 to 2560×720 | bandwidth |
+| B, 7680×2160 source | shared NVENC, 3 runs | 5.8 to 8.6 | 60.0 fps | 3840×1080 | none |
+
+Raw logs: `baseline.log` (software) and `baseline_nvenc.log`.
+
 ## Limits of this method
 
 - CPU is process CPU as a percentage of all logical processors. It excludes

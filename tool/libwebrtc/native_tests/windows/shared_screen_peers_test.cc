@@ -22,6 +22,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <windows.h>
+#include <psapi.h>
 
 #include <algorithm>
 #include <atomic>
@@ -54,6 +55,8 @@
 #include "rtc_video_track.h"
 #include "smoke_util.h"
 
+#pragma comment(lib, "psapi.lib")
+
 using namespace libwebrtc;
 using clk = std::chrono::steady_clock;
 #define STEP(msg) std::printf("    step: %s\n", msg)
@@ -67,6 +70,36 @@ void LogSink(const string& message) {
     std::printf("    [webrtc] %s", m.c_str());
     if (m.empty() || m.back() != '\n') std::printf("\n");
   }
+}
+
+// Process-level load, for soak runs: memory, handles and CPU of this process.
+struct ProcSample {
+  double private_mb = 0;
+  DWORD handles = 0;
+  double cpu_seconds = 0;
+  std::chrono::steady_clock::time_point at;
+};
+ProcSample SampleProcess() {
+  ProcSample p;
+  PROCESS_MEMORY_COUNTERS_EX mem = {};
+  mem.cb = sizeof(mem);
+  GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&mem), sizeof(mem));
+  p.private_mb = static_cast<double>(mem.PrivateUsage) / (1024.0 * 1024.0);
+  GetProcessHandleCount(GetCurrentProcess(), &p.handles);
+  FILETIME c, e, k, u;
+  GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u);
+  auto sec = [](FILETIME f) {
+    ULARGE_INTEGER v; v.LowPart = f.dwLowDateTime; v.HighPart = f.dwHighDateTime;
+    return static_cast<double>(v.QuadPart) / 1e7;
+  };
+  p.cpu_seconds = sec(k) + sec(u);
+  p.at = std::chrono::steady_clock::now();
+  return p;
+}
+int LogicalCpus() {
+  SYSTEM_INFO si;
+  GetSystemInfo(&si);
+  return static_cast<int>(si.dwNumberOfProcessors);
 }
 
 struct Options {
@@ -83,6 +116,11 @@ struct Options {
   int throttle_at = -1;    // seconds: cap peer 0's bitrate far below the stream's
   int unthrottle_at = -1;  // seconds: lift the cap again
   int throttle_kbps = 2000;
+  int max_height = 0;        // preset by height instead of --scale
+  int report_every = 0;      // seconds between load reports (0: only for runs over 40 s)
+  int change_mode_at = -1;   // seconds: change a display's mode mid-share
+  std::string change_mode;   // "W H HZ"
+  std::string change_display = "\\\\.\\DISPLAY6";
   bool software = false;
   std::string log_filter;  // print libwebrtc log lines containing this text
   std::string json_path = "shared_screen_peers.json";
@@ -543,6 +581,11 @@ int main(int argc, char** argv) {
     else if (arg("--throttle-peer-at")) opt.throttle_at = std::atoi(argv[++i]);
     else if (arg("--unthrottle-at")) opt.unthrottle_at = std::atoi(argv[++i]);
     else if (arg("--throttle-kbps")) opt.throttle_kbps = std::atoi(argv[++i]);
+    else if (arg("--max-height")) opt.max_height = std::atoi(argv[++i]);
+    else if (arg("--report-every")) opt.report_every = std::atoi(argv[++i]);
+    else if (arg("--change-mode-at")) opt.change_mode_at = std::atoi(argv[++i]);
+    else if (arg("--change-mode")) opt.change_mode = argv[++i];  // WxHxHZ
+    else if (arg("--change-display")) opt.change_display = argv[++i];
     else if (arg("--json")) opt.json_path = argv[++i];
     else if (arg("--log-filter")) opt.log_filter = argv[++i];
     else if (std::strcmp(argv[i], "--software") == 0) opt.software = true;
@@ -587,8 +630,8 @@ int main(int argc, char** argv) {
     if (!opt.software) {
       LibWebRTCSharedScreenRequest req = {};
       req.id = "peers-test";
-      req.max_height = 0;
-      req.source_scale = opt.scale;
+      req.max_height = opt.max_height;
+      req.source_scale = opt.max_height > 0 ? 0.0 : opt.scale;
       req.frame_rate = opt.fps;
       req.bitrate_bps = static_cast<long long>(opt.kbps) * 1000;
       req.keyframe_interval_seconds = opt.keyframe_seconds;
@@ -661,6 +704,15 @@ int main(int argc, char** argv) {
       std::string smi;
       bool dropped = false, joined = false;
       int late_first_ms = -1;
+      // Load reporting (always for runs over 40 s, or with --report-every).
+      const int every = opt.report_every > 0 ? opt.report_every : (opt.seconds > 40 ? 10 : 0);
+      ProcSample proc_prev = SampleProcess();
+      std::vector<int> report_last;               // frames per receiver at the last report
+      std::vector<double> bytes_last;             // bytes sent per sender at the last report
+      std::vector<double> window_min_fps, window_min_recv, window_tx_mbps, mem_series, handle_series, cpu_series;
+      std::vector<double> received_last;
+      std::vector<std::string> window_limits;
+      const bool disturbed = opt.change_mode_at > 0 && iteration == 1;
       const auto start = clk::now();
       for (int s = 1; s <= opt.seconds; ++s) {
         const auto tick = start + std::chrono::seconds(s);
@@ -669,6 +721,71 @@ int main(int argc, char** argv) {
           const int now = h.peers_[i]->renderer.frames_.load();
           if (fps_series[i].size() < 4096) fps_series[i].push_back(now - last[i]);
           last[i] = now;
+        }
+        if (every > 0 && s % every == 0) {
+          const ProcSample now_proc = SampleProcess();
+          const double wall = std::chrono::duration<double>(now_proc.at - proc_prev.at).count();
+          const double cpu = wall > 0 ? (now_proc.cpu_seconds - proc_prev.cpu_seconds) / wall / LogicalCpus() * 100.0 : 0;
+          proc_prev = now_proc;
+          report_last.resize(h.peers_.size(), 0);
+          bytes_last.resize(h.peers_.size(), 0);
+          received_last.resize(h.peers_.size(), 0);
+          double min_fps = 1e9, sum_fps = 0, min_recv = 1e9, sum_recv = 0; int live = 0;
+          long long dropped_total = 0, freezes_total = 0, lost_total = 0;
+          double tx_bits = 0; std::string limit = "none";
+          for (size_t i = 0; i < h.peers_.size(); ++i) {
+            if (h.peers_[i]->closed) continue;
+            const int frames = h.peers_[i]->renderer.frames_.load();
+            const double fps = (frames - report_last[i]) / static_cast<double>(every);
+            report_last[i] = frames;
+            if (i < static_cast<size_t>(opt.receivers) || true) { min_fps = std::min(min_fps, fps); sum_fps += fps; ++live; }
+            const std::string in = h.Stats(h.peers_[i]->recv, "inbound-rtp");
+            const double received = ToD(JsonField(in, "framesReceived"));
+            const double recv_fps = (received - received_last[i]) / static_cast<double>(every);
+            received_last[i] = received;
+            min_recv = std::min(min_recv, recv_fps);
+            sum_recv += recv_fps;
+            dropped_total += static_cast<long long>(ToD(JsonField(in, "framesDropped")));
+            freezes_total += static_cast<long long>(ToD(JsonField(in, "freezeCount")));
+            lost_total += static_cast<long long>(ToD(JsonField(in, "packetsLost")));
+            const std::string out = h.Stats(h.peers_[i]->send, "outbound-rtp");
+            const double bytes = ToD(JsonField(out, "bytesSent"));
+            tx_bits += (bytes - bytes_last[i]) * 8.0;
+            bytes_last[i] = bytes;
+            const std::string q = JsonField(out, "qualityLimitationReason");
+            if (!q.empty() && q != "none") limit = q;
+          }
+          const double tx_mbps = tx_bits / every / 1e6;
+          const std::string gpu = smoke::RunCommand(
+              "nvidia-smi --query-gpu=utilization.gpu,utilization.encoder,memory.used,"
+              "encoder.stats.sessionCount --format=csv,noheader,nounits 2>&1");
+          std::printf("[t=%3d s] received fps min %.1f avg %.1f, decoded min %.1f avg %.1f | tx %.1f Mbps for %d peer(s), limit %s | "
+                      "dropped %lld freezes %lld lost %lld | proc %.0f MB %lu handles cpu %.0f%% | gpu,enc%%,MiB,sessions: %s\n",
+                      s, min_recv, live ? sum_recv / live : 0.0, min_fps, live ? sum_fps / live : 0.0, tx_mbps, live, limit.c_str(), dropped_total,
+                      freezes_total, lost_total, now_proc.private_mb, now_proc.handles, cpu, gpu.c_str());
+          window_min_fps.push_back(min_fps);
+          window_min_recv.push_back(min_recv);
+          window_tx_mbps.push_back(live ? tx_mbps / live : 0.0);
+          window_limits.push_back(limit);
+          mem_series.push_back(now_proc.private_mb);
+          handle_series.push_back(static_cast<double>(now_proc.handles));
+          cpu_series.push_back(cpu);
+        }
+        if (opt.change_mode_at == s && !opt.change_mode.empty()) {
+          char path[MAX_PATH] = {};
+          GetModuleFileNameA(nullptr, path, MAX_PATH);
+          std::string dir = path;
+          dir = dir.substr(0, dir.find_last_of("\\/") + 1);
+          // --change-mode takes WxHxHZ (no spaces, so it survives shell quoting).
+          int mw = 0, mh = 0, mhz = 60;
+          std::string mode = opt.change_mode;
+          if (std::sscanf(mode.c_str(), "%dx%dx%d", &mw, &mh, &mhz) >= 2) {
+            mode = std::to_string(mw) + " " + std::to_string(mh) + " " + std::to_string(mhz);
+          }
+          const std::string cmd = "\"" + dir + "display_tool.exe\" set " + opt.change_display + " " + mode;
+          std::printf("t=%d s: changing the display mode: %s\n", s, cmd.c_str());
+          const int rc = std::system(("\"" + cmd + "\"").c_str());
+          std::printf("    display_tool exit %d\n", rc);
         }
         if (s == opt.seconds / 2 && !opt.software) {
           smi = smoke::RunCommand(
@@ -717,7 +834,7 @@ int main(int argc, char** argv) {
         auto& series = fps_series[i];
         int total = 0, counted = 0;
         std::string line;
-        for (int v : series) { line += std::to_string(v) + " "; }
+        if (opt.seconds <= 60) for (int v : series) { line += std::to_string(v) + " "; }
         // steady state: skip the first 3 s while the key frame / bandwidth ramps
         for (size_t k = 3; k < series.size(); ++k) { total += series[k]; ++counted; }
         const double avg = counted ? static_cast<double>(total) / counted : 0.0;
@@ -727,6 +844,10 @@ int main(int argc, char** argv) {
         const bool is_dropped = dropped && i == 0;
         const bool is_late = i >= static_cast<size_t>(opt.receivers);
         if (is_dropped) continue;
+        if (disturbed) {
+          std::printf("    (display changed mid-share: rate and size are reported, not checked)\n");
+          continue;
+        }
         if (!opt.software && !is_late) {
           verdict.Check(h.peers_[i]->renderer.width_ == resolved.width &&
                             h.peers_[i]->renderer.height_ == resolved.height,
@@ -749,6 +870,28 @@ int main(int argc, char** argv) {
                       late_first_ms, opt.keyframe_seconds);
           verdict.Check(late_first_ms <= (opt.keyframe_seconds + 3) * 1000,
                         "late viewer starts within a key frame interval + handshake");
+        }
+        if (!window_min_fps.empty()) {
+          auto minOf = [](const std::vector<double>& v, size_t from) { double m = 1e18; for (size_t i = from; i < v.size(); ++i) m = std::min(m, v[i]); return m; };
+          auto maxOf = [](const std::vector<double>& v) { double m = 0; for (double x : v) m = std::max(m, x); return m; };
+          auto avgOf = [](const std::vector<double>& v, size_t from) { double t = 0; size_t n = 0; for (size_t i = from; i < v.size(); ++i) { t += v[i]; ++n; } return n ? t / n : 0.0; };
+          // The first window includes the key frame and bandwidth ramp-up.
+          const size_t warm = window_min_fps.size() > 1 ? 1 : 0;
+          std::printf("\nload summary over %zu report windows: slowest receiver window %.1f fps; per-peer send rate avg %.1f Mbps (max %.1f); "
+                      "memory %.0f -> %.0f MB (peak %.0f); handles %.0f -> %.0f; CPU avg %.0f%%\n",
+                      window_min_fps.size(), minOf(window_min_fps, warm), avgOf(window_tx_mbps, warm), maxOf(window_tx_mbps),
+                      mem_series.front(), mem_series.back(), maxOf(mem_series), handle_series.front(), handle_series.back(), avgOf(cpu_series, 0));
+          std::printf("received (network/RTP) fps, slowest window %.1f; decoded fps, slowest window %.1f "
+                      "(a gap between the two is the receiver's software decoder, not the sender)\n",
+                      minOf(window_min_recv, warm), minOf(window_min_fps, warm));
+          verdict.Check(minOf(window_min_recv, warm) >= opt.fps * 0.9,
+                        "every receiver was delivered at least 90% of the target frame rate in every window (slowest " +
+                            std::to_string(minOf(window_min_recv, warm)).substr(0, 5) + " fps)");
+          bool limited = false;
+          for (auto& l : window_limits) if (l != "none") limited = true;
+          verdict.Check(!limited, "libwebrtc never reported a quality limitation (bandwidth/cpu)");
+          verdict.Check(mem_series.back() <= mem_series.front() * 1.25 + 50, "process memory did not grow by more than 25% + 50 MB");
+          verdict.Check(handle_series.back() <= handle_series.front() + 200, "handle count did not leak");
         }
         if (opt.throttle_at > 0 && fps_series.size() > 2) {
           auto avg = [&](size_t peer, int from_s, int to_s) {

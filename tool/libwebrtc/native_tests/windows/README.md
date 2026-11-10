@@ -72,3 +72,28 @@ build\windows\x64\runner\Release\discourse_native.exe
 Results go to `VOICE_DRIVER_LOG` (default `C:\setup\voice_driver.log`) and the
 exit code is 0 only if every check passed. Start `animate.ps1` first so the
 display has motion, and make the virtual display the primary monitor.
+
+## Load, presets, display changes and the software baseline
+
+`noise_window.exe X Y W H [seconds] [block] [amplitude]` fills a monitor with GPU
+noise, a realistic worst case for a screen capture. Amplitude 1.0 is full-range
+white noise, which no constant-bitrate encoder can reach a 25 Mbps target with
+(it is already at the maximum quantiser, about 195 Mbps at 3840×1080). Use 0.1
+to 0.3 with 8-pixel blocks for heavy but controllable content.
+`start_noise.ps1` starts it in the console session.
+
+`shared_screen_peers_test.exe` also takes `--max-height`, `--scale`, `--fps`,
+`--kbps`, `--report-every` (periodic bitrate, drop, freeze, memory, handle, CPU
+and GPU lines; automatic for runs over 40 s) and `--change-mode-at S
+--change-mode WxHxHZ` (change a display under a live share).
+
+`scenarios/` has the scripts behind the results in
+`docs/voice-windows-acceptance.md`; they assume the layout in this README
+(`C:\w`, `C:\setup`, a `gputest` console user):
+
+- `preset-matrix.ps1`: 4K level 5.2, 720p60, 1080p60 and 30 fps presets.
+- `display-matrix.ps1`: a resolution change under a live share, a rotated
+  display and HDR (`display_tool hdr`).
+- `cache-test.ps1`: the capability is re-evaluated after a display is fixed.
+- `launch-baseline.ps1`: runs `integration_test/voice_windows_baseline_driver.dart`
+  as two processes (viewers and sender) and prints the RESULT lines.

@@ -3,6 +3,7 @@
 #   capture_encode_test.exe - real DXGI capture -> NVENC (needs a display)
 #   display_tool.exe       - list/attach/set modes of GDI displays (virtual display setup)
 #   shared_screen_peers_test.exe - shared screen to several peers via libwebrtc.dll (-WebRtcRelease)
+#   noise_window.exe       - GPU noise on a monitor: a worst-case, constant-bitrate capture source
 #   shared_screen_probe.exe - loads libwebrtc.dll and reports its shared-screen API
 #
 #   powershell -File build_nvenc_smoke_test.ps1 [-Run] [test arguments]
@@ -57,6 +58,9 @@ $targets = @(
   @{ Name = 'display_tool'
      Sources = @((Join-Path $here 'display_tool.cc'))
      Libs = 'user32.lib' },
+  @{ Name = 'noise_window'
+     Sources = @((Join-Path $here 'noise_window.cc'))
+     Libs = 'd3d11.lib dxgi.lib d3dcompiler.lib user32.lib' },
   @{ Name = 'shared_screen_probe'
      Sources = @((Join-Path $here 'shared_screen_probe.cc'))
      Libs = '' }

@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstdlib>
 
 extern "C" {
 struct Capabilities {
@@ -59,10 +60,15 @@ int main(int argc, char** argv) {
     std::printf("FAIL: unexpected API version\n");
     return 1;
   }
-  Capabilities c = {};
-  caps(&c);
-  std::printf("available: %d\nreason: %s\nadapter: %s\nmax: %dx%d @ %d fps\n",
-              c.available, c.reason, c.adapter_name, c.max_width, c.max_height,
-              c.max_frame_rate);
+  const int repeat = argc > 2 ? std::atoi(argv[2]) : 1;
+  const int interval = argc > 3 ? std::atoi(argv[3]) : 5;
+  for (int i = 0; i < repeat; ++i) {
+    if (i) Sleep(interval * 1000);
+    Capabilities c = {};
+    caps(&c);
+    std::printf("[%d] available: %d | reason: %s | adapter: %s | max %dx%d @ %d fps\n",
+                i + 1, c.available, c.reason, c.adapter_name, c.max_width, c.max_height,
+                c.max_frame_rate);
+  }
   return 0;
 }

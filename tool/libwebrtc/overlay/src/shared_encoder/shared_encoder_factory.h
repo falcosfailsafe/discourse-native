@@ -26,8 +26,11 @@ struct EncoderCapabilities {
   int max_frame_rate = 0;
 };
 
-// Probed once per process on first use and cached (Windows + NVENC only).
-const EncoderCapabilities& GetEncoderCapabilities();
+// Probed on first use (Windows + NVENC only). A positive answer is cached for
+// the life of the process; a negative one is probed again after a few seconds,
+// so a display that was rotated, in HDR or detached at first use does not keep
+// hardware encoding off until the app restarts.
+EncoderCapabilities GetEncoderCapabilities();
 
 std::unique_ptr<webrtc::VideoEncoderFactory> CreateSharedEncoderFactory(
     std::unique_ptr<webrtc::VideoEncoderFactory> inner);
