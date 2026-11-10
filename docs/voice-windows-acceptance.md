@@ -190,6 +190,37 @@ The released archive does not include the matching PDB. The DLL's
 CodeView record identifies `libwebrtc.dll.pdb`, GUID
 `7F0BEFFE-36BD-F5D4-4C4C-44205044422E`, age 1.
 
+### Teardown crash: diagnosis and fix (`.4`)
+
+The `.3` DLL in the release archive has the same PE timestamp (`0x6a49e4d0`)
+and CodeView GUID as the crashing module, so its code at `+0x218f7` was
+disassembled directly (no PDB needed):
+
+```
+mov rcx, [rcx+0x18]     ; this->rtc_peerconnection_  (null after Close())
+mov rax, [rcx]          ; <- faults here: read at address zero
+mov rax, [rax+0x80]     ; virtual call on PeerConnectionInterface
+call rax                ; returns a vector, which the loop then walks
+```
+
+That is `RTCPeerConnectionImpl::senders()` (`transceivers()` and
+`receivers()` have the same shape). `RTCPeerConnectionImpl::Close()` sets
+`rtc_peerconnection_ = nullptr`, but these accessors, the state getters and
+the Add/Remove/description methods dereferenced it unchecked. A caller that
+reaches the wrapper after `close()` faults, which is why it also reproduced
+with no share active. It is an upstream wrapper defect, not part of the
+shared encoder.
+
+`.4` guards every such use and returns empty lists, "closed" states, null
+transceivers or a failure callback instead. A regression test
+(`PeerConnectionClosed.AccessorsAreSafeAfterClose`) ran in CI.
+
+**Not yet verified on hardware.** That `.4` stops these crashes in the app
+is an inference from the disassembly and the passing unit test. Rerun the
+three teardown scenarios above on `.4`. A crash that remains at a different
+offset is a separate bug, and the Dart side still calls into a closed
+connection and may want its own guard.
+
 ### Timed software baseline
 
 All six stock software runs completed and are recorded in
