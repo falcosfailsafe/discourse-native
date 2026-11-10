@@ -28,11 +28,24 @@ concessions:
 
 The Windows runner/CI, shared-encoder Dart controls and native bridge, and
 GPU/NVENC/passthrough source overlay are implemented. The custom Windows
-`libwebrtc.dll` builds in CI (including the C++ unit tests) and is published as `discourse.m150.7871.07.4`; its SHA-256 is pinned in
-`libwebrtc_version.ini`. **Phase 2 is not yet accepted:** the
-hardware acceptance call below must still pass on an NVIDIA machine
-(the Windows app builds in CI, but has never been run).
-Nothing has run on a GPU yet.
+`libwebrtc.dll` builds in CI (including the C++ unit tests) and is published as
+`discourse.m150.7871.07.5`; its SHA-256 is pinned in `libwebrtc_version.ini`.
+The Windows app builds in CI.
+
+**Phase 2 is only partly accepted.** The native pipeline has been run on a GPU,
+on an AWS Tesla T4 with a virtual 7680×2160 (60 Hz) display, not on the RTX 5090
+reference machine. Through the real `libwebrtc.dll` it shows one NVENC session
+serving three peers at 3840×1080 and 60 fps, a stalled peer freezing and
+recovering at a key frame while the others are unaffected, and a clean teardown
+(details and the bug it found in
+[voice-windows-acceptance.md](../voice-windows-acceptance.md)). Still open:
+
+- the RTX 5090 at 240 Hz, and a Windows sender **without** NVENC (the software
+  path was exercised only as a plain software encode plus teardown);
+- "no CPU frame copies" is by construction (the frames never leave the GPU) and
+  was not measured;
+- the Flutter layer (`MeshVoiceMediaSession`, the picker, the placeholder) has
+  never been run on Windows.
 
 - Build recipe, immutable source pins and fork instructions:
   [`tool/libwebrtc/README.md`](../../tool/libwebrtc/README.md).
@@ -130,7 +143,7 @@ Done when the app runs on our build with no change in behaviour.
   `webrtc-sdk/webrtc` `m150_release` commit. (`m150_release` is not a branch in
   the wrapper repository.)
 - [x] Build `libwebrtc.dll` (x64) in CI and point `libwebrtc_version.ini` at
-  our release (`discourse.m150.7871.07.4`, SHA-256 pinned). The `windows-bundle` CI job builds the
+  our release (`discourse.m150.7871.07.5`, SHA-256 pinned). The `windows-bundle` CI job builds the
   app against it and checks the shared-screen export.
 - [x] Document the fork in `PATCHES.md` and extend the provenance check.
 

@@ -255,6 +255,18 @@ jobs:
           grep -aq LibWebRTCSharedScreenCreateSource "$bundle/libwebrtc.dll"
           test -f "$bundle/livekit_client_plugin.dll"
 
+      - name: Native API probe against the bundled libwebrtc.dll
+        # Must not crash without a display (it did in .4 and earlier) and must
+        # report either available or a reason. No GPU is needed.
+        working-directory: C:/w
+        run: |
+          set -euxo pipefail
+          powershell -NoProfile -ExecutionPolicy Bypass \
+            -File tool/libwebrtc/native_tests/windows/build_nvenc_smoke_test.ps1
+          mode='${{ inputs.windows_mode || 'debug' }}'
+          dll="build/windows/x64/runner/${mode^}/libwebrtc.dll"
+          ./build/nvenc_smoke_test/shared_screen_probe.exe "$(cygpath -w "$PWD/$dll")"
+
   apple-bundles:
     # Compile both application wrappers on Apple. Each must include the
     # Voice-owned CallKit bridge and media registrants.

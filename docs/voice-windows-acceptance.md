@@ -242,7 +242,7 @@ design works; they say nothing about 5090 headroom.
 | GPU | Tesla T4, driver 596.86, WDDM, `nvEncodeAPI64.dll` present |
 | Display | [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) 25.7.23 (MIT, signed by the SignPath Foundation) as the primary monitor, **7680×2160 at 60 Hz**, SDR |
 | Session | A dedicated local user auto-logged-on at the console, tests started through a scheduled task with an Interactive logon (see `tool/libwebrtc/native_tests/windows/README.md`) |
-| libwebrtc | `discourse.m150.7871.07.4` (the bundled DLL's SHA-256 matched the verified release) |
+| libwebrtc | `discourse.m150.7871.07.4` for the first runs (the bundled DLL's SHA-256 matched the verified release). The multi-peer scenarios were rerun on `discourse.m150.7871.07.5` (ZIP SHA-256 `d1f5c83c…9083`, built from fork commit `f3c983f`) with the same results, and `.5` is what the app now pins. |
 | Programs | `tool/libwebrtc/native_tests/windows/` |
 
 ### Results
@@ -258,6 +258,7 @@ design works; they say nothing about 5090 headroom.
 | A viewer joins late | The fourth viewer's first frame arrived 1842 ms after joining (key frame interval 2 s). Still one NVENC session with four peers. |
 | Teardown, five full create/destroy cycles | 71 to 83 ms each, no crash, and the NVENC session count was back to 0 after every cycle. |
 | Closed-connection regression, on the real DLLs | The harness closes a viewer and then calls `senders()`, `transceivers()`, `receivers()` and the state getters on it. `.3`: crash `0xC0000005` at `+0x211b7`. `.4`: passes. |
+| `GetCapabilities` in a session with no display (SSH), on the real DLLs | `.4`: crash `0xC0000005`. `.5`: `available: 0, reason: no attached display matches screen id ''`, exit 0. |
 | Software sender through the same harness | Two receivers decoded 30 fps and teardown was clean. This used a custom source with default negotiation (VP8, libwebrtc downscaled to 480×270), so it covers the fallback plumbing and teardown, **not** software H.264 High. |
 
 ### Bug found and fixed on this machine
@@ -268,8 +269,10 @@ desktop). `FindOutput` stopped enumerating only on `DXGI_ERROR_NOT_FOUND`;
 those sessions fail with `DXGI_ERROR_NOT_CURRENTLY_AVAILABLE` and leave the
 out pointer null, so `GetDesc` ran on null instead of reporting "unavailable"
 so the app falls back. Reproduced with a standalone harness and fixed (any
-enumeration failure ends the list), released as `discourse.m150.7871.07.5`.
-`capture_encode_test --expect-no-display` is the regression test.
+enumeration failure ends the list), released as `discourse.m150.7871.07.5`, verified on the T4 against the real
+DLLs (see the table above). `capture_encode_test --expect-no-display` and
+`shared_screen_probe` are the regression tests, and CI runs the probe against
+the bundled DLL.
 
 ### Findings worth knowing
 
