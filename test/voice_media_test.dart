@@ -4179,6 +4179,7 @@ final class _FakePeerConnection implements rtc.RTCPeerConnection {
   final List<String> mediaPlan = [];
   final List<rtc.MediaStreamTrack> addedTracks = [];
   final List<_FakeSender> addedTrackSenders = [];
+  final Map<String, _FakeSender> refreshedSenders = {};
   final List<rtc.RTCIceCandidate> addedCandidates = [];
   final List<_FakeTransceiver> createdTransceivers = [];
   List<_FakeTransceiver> _associated = [];
@@ -4277,7 +4278,8 @@ final class _FakePeerConnection implements rtc.RTCPeerConnection {
   @override
   Future<List<rtc.RTCRtpSender>> getSenders() async => [
     ...addedTrackSenders,
-    for (final transceiver in createdTransceivers) transceiver.sender,
+    for (final transceiver in createdTransceivers)
+      refreshedSenders[transceiver.sender.senderId] ?? transceiver.sender,
     if (_offerApplied)
       for (final transceiver in _associated) transceiver.sender,
   ];
@@ -4760,7 +4762,7 @@ final class _FakeSender implements rtc.RTCRtpSender {
 
   @override
   rtc.RTCRtpParameters get parameters => rtc.RTCRtpParameters(
-    encodings: [rtc.RTCRtpEncoding()],
+    encodings: [rtc.RTCRtpEncoding(scalabilityMode: scalabilityMode)],
     codecs: negotiatedCodecs,
   );
 
@@ -4773,6 +4775,7 @@ final class _FakeSender implements rtc.RTCRtpSender {
 
   final List<rtc.RTCRtpParameters> appliedParameters = [];
   List<rtc.RTCRTPCodec>? negotiatedCodecs;
+  String? scalabilityMode;
   bool setParametersResult = true;
 
   @override
@@ -5149,6 +5152,27 @@ void _sharedScreenEncodingTests() {
         bitrates: bitrates,
       );
     }
+
+    test(
+      'uses current negotiated parameters for the cached video sender',
+      () async {
+        final t = await start(noCodecInfo: true);
+        final sender = t.peer.createdTransceivers[1].sender;
+        t.peer.refreshedSenders[sender.senderId] =
+            _FakeSender(sender.senderId, null, [])
+              ..negotiatedCodecs = _highH264
+              ..scalabilityMode = '';
+
+        await t.media.setScreenShareEnabled(true);
+
+        expect(sender.track?.id, 'shared-video');
+        expect(
+          sender.appliedParameters.single.encodings!.single.scalabilityMode,
+          isNull,
+        );
+        expect(t.media.screenShareUnsupportedPeerIds, isEmpty);
+      },
+    );
 
     test('captures through the encoder with the sender preset', () async {
       final t = await start();

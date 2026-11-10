@@ -1789,7 +1789,13 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier
     if (slots == null || peer == null || track == null) return;
     final sender = slots.video;
     try {
-      final parameters = sender.parameters;
+      // The sender returned at addTransceiver caches pre-negotiation parameters.
+      final currentSender = (await peer.getSenders())
+          .where((current) => current.senderId == sender.senderId)
+          .firstOrNull;
+      if (!identical(_sendSlots[peerId], slots) || !_screenShareShared) return;
+      if (currentSender == null) throw StateError('Video sender disappeared');
+      final parameters = currentSender.parameters;
       final codec = (parameters.codecs ?? const <rtc.RTCRTPCodec>[])
           .where(
             (codec) => !_auxiliaryCodecs.contains(codec.name?.toLowerCase()),
@@ -1810,6 +1816,9 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier
         encoding.maxBitrate = preset.bitrate;
         encoding.maxFramerate = preset.frameRate;
         encoding.scaleResolutionDownBy = 1.0;
+        // The native bridge reads an unset mode as an empty string. Omit it
+        // on write so libwebrtc does not validate it as a named mode.
+        if (encoding.scalabilityMode == '') encoding.scalabilityMode = null;
       }
       // The passthrough cannot rescale, so libwebrtc must not try.
       parameters.degradationPreference =
