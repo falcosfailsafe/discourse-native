@@ -267,7 +267,7 @@ The real `MeshVoiceMediaSession` (the Dart class the app uses), the real
 `flutter_webrtc` plugin and the pinned `.5` DLL, run in one process: a sender
 and three viewers joined by an in-memory signaling bus, with the sender on the
 7680×2160 virtual display. It is built as a Release app and run in the console
-session; it writes its results to a log file. **All 38 checks passed.**
+session; it writes its results to a log file. **All 33 checks passed, none failed.**
 
 | Check | Result |
 | --- | --- |
