@@ -18,14 +18,16 @@ void main() {
       contract.catalog,
       'packages/discourse_voice/tool/vendor_contract.json',
     );
+    // Absolute filesystem paths use the platform's separators.
+    String posix(String path) => path.replaceAll(r'\', '/');
     expect(
-      contract.patchManifest,
+      posix(contract.patchManifest),
       endsWith(
         'packages/discourse_voice/third_party/flutter_webrtc/PATCHES.md',
       ),
     );
     expect(
-      contract.vendorPath,
+      posix(contract.vendorPath),
       endsWith('packages/discourse_voice/third_party/flutter_webrtc'),
     );
   });
