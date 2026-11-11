@@ -444,6 +444,90 @@ Future<void> _fallbackScenario() async {
   _log('software path torn down without a crash');
 }
 
+/// The first virtual display's GDI name, from display_tool.
+Future<String?> _virtualDisplay(String tools) async {
+  final result = await Process.run('$tools\\display_tool.exe', ['list']);
+  for (final line in '${result.stdout}'.split('\n')) {
+    if (line.contains('Virtual Display Driver')) {
+      return line.split('|').first.trim();
+    }
+  }
+  return null;
+}
+
+/// A display change under a live share killed the share for good (the capture
+/// fails permanently, the encoder is released, viewers freeze, the session
+/// still reports sharing). With the watchdog the share must come back at the
+/// new size. Run on a build that has it.
+Future<void> _watchdogScenario() async {
+  _log('=== display change under a live share: the share must come back');
+  final tools =
+      Platform.environment['VOICE_TOOLS'] ?? r'C:\w\build\nvenc_smoke_test';
+  final display = await _virtualDisplay(tools);
+  if (display == null) {
+    _check(false, 'a virtual display exists');
+    return;
+  }
+  final room = _Room(ids: [1, 2, 3]);
+  await room.start();
+  final sender = room.members[1]!;
+  final viewer = room.members[2]!;
+  await _wait(3);
+  sender.session.screenSharePreset = VoiceScreenSharePreset.halfSource60;
+  await sender.session.setScreenShareEnabled(true);
+  await _wait(10);
+  final before = await _decodeRate(viewer, 5);
+  _log(
+    'before: ${before.width}x${before.height}, ${before.fps.toStringAsFixed(1)} fps',
+  );
+  _check(
+    before.width == 3840 && before.fps >= 45,
+    'the share is healthy before the change',
+  );
+
+  _log('changing $display to 3840x2160');
+  await Process.run('$tools\\display_tool.exe', [
+    'set',
+    display,
+    '3840',
+    '2160',
+    '60',
+  ]);
+  final started = DateTime.now();
+  var recovered = false;
+  var lastFrames = 0;
+  for (var i = 0; i < 25 && !recovered; i++) {
+    await _wait(2);
+    final stats = await _videoStats(viewer.peers, 'inbound');
+    final frames = _num(stats?['framesDecoded']).toInt();
+    final width = _num(stats?['frameWidth']).toInt();
+    final height = _num(stats?['frameHeight']).toInt();
+    final moving = frames - lastFrames;
+    lastFrames = frames;
+    final seconds = DateTime.now().difference(started).inSeconds;
+    _log(
+      '  +${seconds}s: ${width}x$height, $moving frames in the last 2 s, sessions ${await _nvencSessions()}',
+    );
+    if (width == 1920 && height == 1080 && moving >= 60) recovered = true;
+  }
+  _check(
+    recovered,
+    'viewers get video again at the new size (1920x1080) within 50 s',
+  );
+  _check(sender.session.screenSharing, 'the session is still sharing');
+  _check(await _nvencSessions() == '1', 'one NVENC session after the restart');
+
+  await Process.run('$tools\\display_tool.exe', [
+    'set',
+    display,
+    '7680',
+    '2160',
+    '60',
+  ]);
+  await sender.session.setScreenShareEnabled(false);
+  await room.disposeAll();
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
@@ -454,8 +538,13 @@ Future<void> main() async {
   );
   var code = 0;
   try {
-    await _sharedScenario().timeout(const Duration(minutes: 6));
-    await _fallbackScenario().timeout(const Duration(minutes: 4));
+    final which = Platform.environment['VOICE_DRIVER_SCENARIO'] ?? 'all';
+    if (which == 'watchdog') {
+      await _watchdogScenario().timeout(const Duration(minutes: 5));
+    } else {
+      await _sharedScenario().timeout(const Duration(minutes: 6));
+      await _fallbackScenario().timeout(const Duration(minutes: 4));
+    }
   } catch (error, stack) {
     _failures.add('exception: $error');
     _log('EXCEPTION: $error\n$stack');
