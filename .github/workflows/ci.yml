@@ -267,6 +267,40 @@ jobs:
           dll="build/windows/x64/runner/${mode^}/libwebrtc.dll"
           ./build/nvenc_smoke_test/shared_screen_probe.exe "$(cygpath -w "$PWD/$dll")"
 
+      - name: Package the Windows tester build
+        # A Release run is shipped as an unsigned zip for testers. The Visual C++
+        # runtime is copied beside the exe so a clean machine can start it.
+        if: inputs.windows_mode == 'release'
+        working-directory: C:/w
+        shell: pwsh
+        run: |
+          $r = 'build/windows/x64/runner/Release'
+          foreach ($n in 'msvcp140.dll','msvcp140_1.dll','msvcp140_2.dll','vcruntime140.dll','vcruntime140_1.dll','concrt140.dll') {
+            if (Test-Path "C:\Windows\System32\$n") { Copy-Item "C:\Windows\System32\$n" $r -Force }
+          }
+          @"
+          Discourse Native (Windows tester build)
+          Source: ${{ github.sha }}
+
+          Run discourse_native.exe from this folder (keep all files together).
+          Unsigned: Windows SmartScreen will warn. Choose More info, then Run anyway.
+          The Visual C++ runtime DLLs are bundled; if it still fails to start,
+          install https://aka.ms/vs/17/release/vc_redist.x64.exe
+          Voice screen share uses NVENC on NVIDIA GPUs (primary SDR monitor only,
+          no cursor) and falls back to software capture otherwise.
+          "@ -replace '(?m)^ {10}', '' | Set-Content "$r/README-TESTER.txt"
+          New-Item -ItemType Directory -Force C:/out | Out-Null
+          Compress-Archive -Path "$r/*" -DestinationPath C:/out/discourse-native-windows-tester.zip -CompressionLevel Optimal
+          (Get-FileHash C:/out/discourse-native-windows-tester.zip).Hash
+
+      - name: Upload the Windows tester build
+        if: inputs.windows_mode == 'release'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: discourse-native-windows-tester
+          path: C:/out/discourse-native-windows-tester.zip
+          retention-days: 30
+
   apple-bundles:
     # Compile both application wrappers on Apple. Each must include the
     # Voice-owned CallKit bridge and media registrants.
