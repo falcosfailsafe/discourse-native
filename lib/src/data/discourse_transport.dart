@@ -581,6 +581,11 @@ final class DiscourseTransport {
       switch (Platform.operatingSystem) {
         'macos' || 'ios' => const {61, 51, 65, 50},
         'linux' || 'android' => const {111, 101, 113, 100},
+        // Dart's Windows sockets report Win32 codes (a refused connection is
+        // ERROR_CONNECTION_REFUSED, 1225, verified on Windows Server 2025);
+        // the unreachable ones are ERROR_NETWORK_UNREACHABLE and
+        // ERROR_HOST_UNREACHABLE. The WSA equivalents are accepted as well.
+        'windows' => const {1225, 1231, 1232, 10061, 10051, 10065, 10050},
         _ => const {},
       };
 

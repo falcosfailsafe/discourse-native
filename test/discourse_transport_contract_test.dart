@@ -911,8 +911,15 @@ void main() {
 
   group('whether a failed write reached the site', () {
     final onDarwin = Platform.isMacOS || Platform.isIOS;
+    // Windows reports Win32 codes, which are neither kernel's errno.
+    const windows = {61: 1225, 51: 1231, 65: 1232, 50: 10050};
     OSError os(String message, {required int darwin, required int linux}) =>
-        OSError(message, onDarwin ? darwin : linux);
+        OSError(
+          message,
+          Platform.isWindows
+              ? windows[darwin] ?? darwin
+              : (onDarwin ? darwin : linux),
+        );
 
     Future<WriteException> failedWrite(
       DiscourseTransport transport,
