@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import '../foundation/private_file_document.dart';
 import '../foundation/private_file_permissions.dart';
 import 'serial_operation_queue.dart';
+import 'windows_private_storage.dart';
 
 abstract interface class PrivateStorage {
   Future<String?> read(String key);
@@ -42,8 +43,8 @@ final _PlatformPrivateStorage _platformStorage =
 
 /// Credential storage: Data Protection Keychain in distributed Apple builds,
 /// an isolated login-keychain service in custom-signed macOS development
-/// builds, Android Keystore encryption on Android, and a mode-0600 XDG file
-/// on Linux.
+/// builds, Android Keystore encryption on Android, a mode-0600 XDG file on
+/// Linux, and a DPAPI-encrypted file under %LOCALAPPDATA% on Windows.
 final PrivateStorage platformCredentialStorage = _platformStorage.credentials;
 
 /// Local document storage used by Linux drafts. Apple drafts have their own
@@ -86,6 +87,15 @@ final class _PlatformPrivateStorage {
     }
     if (Platform.isLinux) {
       final storage = LinuxFileStorage();
+      return _PlatformPrivateStorage(
+        credentials: storage,
+        enumerable: storage,
+        legacyApple: null,
+        legacyClientIds: storage,
+      );
+    }
+    if (Platform.isWindows) {
+      final storage = WindowsPrivateStorage();
       return _PlatformPrivateStorage(
         credentials: storage,
         enumerable: storage,

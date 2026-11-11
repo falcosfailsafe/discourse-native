@@ -79,7 +79,10 @@ final class PrivateDraftPersistence implements DraftPersistence {
 
 DraftPersistence _platformDraftPersistence() {
   if (Platform.isLinux) return PrivateDraftPersistence();
-  if (Platform.isIOS || Platform.isMacOS || Platform.isAndroid) {
+  if (Platform.isIOS ||
+      Platform.isMacOS ||
+      Platform.isAndroid ||
+      Platform.isWindows) {
     return ApplicationSupportDraftPersistence();
   }
   throw UnsupportedError('Draft persistence is unavailable on this platform');
