@@ -386,6 +386,30 @@ carry it. This needs a decision (the plan chose the pin to avoid freezes while
 the estimate climbs), with `bwe-min-fraction` in `shared_screen_peers_test`
 available to evaluate alternatives.
 
+### HDR: can the video processor convert it? (the plan's open question)
+
+`hdr_ramp.exe` draws a known ramp (0 to 6.0 in linear scRGB, so 0 to 480 nits)
+in an FP16 swap chain on the virtual display with Windows HDR on, and
+`hdr_capture_probe.exe` captures it the way the share does and runs it through
+the video processor. On the Tesla T4 (driver 596.86), with the display reporting
+HDR10 and up to 1671 nits:
+
+| Question | Answer |
+| --- | --- |
+| What does `DuplicateOutput1` return with HDR on? | **FP16 scRGB** frames (format 10). |
+| Can `ID3D11VideoProcessor` take them? | **No.** FP16 is supported as an *output* format only (support flags `0x2`), creating an input view fails with `E_INVALIDARG`, and the FP16 scRGB to NV12 BT.709 conversion is reported as unsupported. A plain extra video-processor pass does not work. |
+| A small pixel-shader pass first (FP16 to tone-mapped BGRA8), then the video processor? | **Works**, at **0.47 ms per frame** (7680×2160 to 3840×1080). With a knee at 0.8 and a long shoulder, the ramp stays monotonic across the whole range (luma 208 at 60 nits, 218 at 90, 227 at 180, 233 at 300, 234 at 480). |
+| What does the legacy `DuplicateOutput` give under HDR? | An **8-bit BGRA frame** the existing pipeline can already convert, but **hard-clipped at SDR white**: everything from 80 nits up is flat white (luma 235). |
+
+So the app refuses HDR displays today (`the display uses HDR or a wide color
+space`) because the duplication descriptor reports FP16, even though two ways of
+sharing them exist: the legacy frames as they are (no new code, highlights
+clipped), or an FP16 capture with a sub-millisecond tone-mapping pass
+(highlights kept, a small amount of new capture code). The sender's SDR white
+level (Windows' "SDR content brightness") would also need reading to scale SDR
+content correctly. Cursor composition was not tested: the virtual display has no
+pointing device.
+
 ### The app itself on Windows (it does not start)
 
 Everything above drives the native library and the Voice session class. The

@@ -95,5 +95,10 @@ and GPU lines; automatic for runs over 40 s) and `--change-mode-at S
 - `display-matrix.ps1`: a resolution change under a live share, a rotated
   display and HDR (`display_tool hdr`).
 - `cache-test.ps1`: the capability is re-evaluated after a display is fixed.
+- `hdr-test.ps1`: HDR on, the ramp from `hdr_ramp.exe`, then `hdr_capture_probe.exe` with
+  FP16 duplication (tone-mapping pass) and with the legacy path.
+- `resilience.ps1`: the sender killed mid-share, and the display removed under a live share.
+- `impair*.ps1`: packet loss, latency and a bandwidth ceiling through clumsy
+  (needs clumsy 0.3 under `C:\\setup\\clumsy\\x`).
 - `launch-baseline.ps1`: runs `integration_test/voice_windows_baseline_driver.dart`
   as two processes (viewers and sender) and prints the RESULT lines.
