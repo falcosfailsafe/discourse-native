@@ -476,7 +476,8 @@ which needs a Discourse server with the plugin.
    holds each peer to the preset rate and drops frames instead of exceeding it,
    which is the behaviour the plan wants for a 300 Mbps link.
 5. **A pinned minimum bandwidth estimate floods an undersized link** (table above): up to 9 times the link rate with delivery near zero, against a sender that follows the link when the minimum is lowered.
-6. **Receiver decode is the ceiling at 3840×1080.** One software decoder tops
+6. **The software fallback can share a different monitor from the hardware path.** `_captureDisplayMedia` always picks screen id `"0"` (the first entry in Windows' display list), while the shared encoder captures the primary monitor. With several monitors attached, the first fallback run here captured the 800×600 Basic Display while the 7680×2160 primary was the one the hardware path used (viewers decoded 800×600); with one monitor attached they agree.
+7. **Receiver decode is the ceiling at 3840×1080.** One software decoder tops
    out near 55 fps on worst-case content, three near 50.
 
 ### Bug found and fixed on this machine
