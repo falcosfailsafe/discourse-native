@@ -14,7 +14,7 @@ void main() {
     directory = await Directory.systemTemp.createTemp(
       'discourse-native-private-document-test-',
     );
-    target = File('${directory.path}/state.json');
+    target = File('${directory.path}${Platform.pathSeparator}state.json');
   });
 
   tearDown(() async {
@@ -47,9 +47,18 @@ void main() {
           await document.read((values) => PrivateFileResult(Map.of(values))),
           {'secret': 'value'},
         );
-        expect((await directory.stat()).mode & 0x1ff, 0x1c0); // 0700
-        expect((await target.stat()).mode & 0x1ff, 0x180); // 0600
-        expect((await File('${target.path}.lock').stat()).mode & 0x1ff, 0x180);
+        if (!Platform.isWindows) {
+          expect((await directory.stat()).mode & 0x1ff, 0x1c0); // 0700
+        }
+        if (!Platform.isWindows) {
+          expect((await target.stat()).mode & 0x1ff, 0x180); // 0600
+        }
+        if (!Platform.isWindows) {
+          expect(
+            (await File('${target.path}.lock').stat()).mode & 0x1ff,
+            0x180,
+          );
+        }
         expect(await _temporaryFiles(directory), isEmpty);
       },
     );
@@ -293,7 +302,7 @@ void main() {
                 target.path,
                 series,
                 if (snapshot) 'snapshot',
-              ]),
+              ], runInShell: Platform.isWindows),
           ]);
           for (final process in processes) {
             expect(process.exitCode, 0, reason: '${process.stderr}');
@@ -479,7 +488,9 @@ void main() {
     ]) {
       test('moves $name aside once and continues from empty', () async {
         await target.writeAsBytes(bytes);
-        await Process.run('chmod', ['644', target.path]);
+        if (!Platform.isWindows) {
+          await Process.run('chmod', ['644', target.path]);
+        }
         final setAside = <File>[];
         PrivateFileDocument<Map<String, String>> document() =>
             _mapDocument(target.path, setAsideUndecodable: setAside.add);
@@ -495,7 +506,9 @@ void main() {
 
         final copy = setAside.single;
         expect(await copy.readAsBytes(), bytes);
-        expect((await copy.stat()).mode & 0x1ff, 0x180); // 0600
+        if (!Platform.isWindows) {
+          expect((await copy.stat()).mode & 0x1ff, 0x180); // 0600
+        }
         expect(await _damagedCopies(directory), [copy.path]);
         expect(await target.readAsString(), '{"later":"committed"}');
       });

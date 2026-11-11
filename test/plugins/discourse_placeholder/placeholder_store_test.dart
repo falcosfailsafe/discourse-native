@@ -24,7 +24,9 @@ void main() {
     'restores across restart with private permissions and sliding seven-day expiry',
     () async {
       await store.write(post, 'HOST', 'secret-host');
-      expect((await file.stat()).mode & 0x1ff, 0x180);
+      if (!Platform.isWindows) {
+        expect((await file.stat()).mode & 0x1ff, 0x180);
+      }
       now = now.add(const Duration(days: 6));
       final restarted = PlaceholderStore(file: file, now: () => now);
       expect(await restarted.read(post), {'HOST': 'secret-host'});

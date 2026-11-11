@@ -180,12 +180,18 @@ void main() {
     tearDown(() => directory.delete(recursive: true));
 
     test('portable scan keeps current metadata for recognized files', () async {
-      final bin = File('${directory.path}/entry.bin');
-      final temporary = File('${directory.path}/live.tmp');
+      final bin = File('${directory.path}${Platform.pathSeparator}entry.bin');
+      final temporary = File(
+        '${directory.path}${Platform.pathSeparator}live.tmp',
+      );
       await bin.writeAsBytes([1, 2, 3]);
       await temporary.writeAsBytes([4]);
-      await File('${directory.path}/notes.txt').writeAsBytes([5]);
-      await Directory('${directory.path}/nested.bin').create();
+      await File(
+        '${directory.path}${Platform.pathSeparator}notes.txt',
+      ).writeAsBytes([5]);
+      await Directory(
+        '${directory.path}${Platform.pathSeparator}nested.bin',
+      ).create();
       final timestamp = DateTime.fromMicrosecondsSinceEpoch(1700000000123456);
       await bin.setLastModified(timestamp);
 
@@ -208,9 +214,13 @@ void main() {
     });
 
     test('portable scan ignores files removed after enumeration', () async {
-      final file = File('${directory.path}/removed.bin');
+      final file = File(
+        '${directory.path}${Platform.pathSeparator}removed.bin',
+      );
       await file.writeAsBytes([1]);
-      final missing = File('${directory.path}/missing.bin').statSync();
+      final missing = File(
+        '${directory.path}${Platform.pathSeparator}missing.bin',
+      ).statSync();
 
       final files = IOOverrides.runZoned(
         () => scanPortableByteCacheDirectory(directory),
@@ -228,11 +238,21 @@ void main() {
     test(
       'native scan matches FileStat across batches, node types and timestamps',
       () async {
-        final plain = File('${directory.path}/entry.bin');
-        final empty = File('${directory.path}/empty.bin');
-        final sparse = File('${directory.path}/sparse.bin');
-        final unicode = File('${directory.path}/船-é.bin');
-        final cutoff = File('${directory.path}/cutoff.tmp');
+        final plain = File(
+          '${directory.path}${Platform.pathSeparator}entry.bin',
+        );
+        final empty = File(
+          '${directory.path}${Platform.pathSeparator}empty.bin',
+        );
+        final sparse = File(
+          '${directory.path}${Platform.pathSeparator}sparse.bin',
+        );
+        final unicode = File(
+          '${directory.path}${Platform.pathSeparator}船-é.bin',
+        );
+        final cutoff = File(
+          '${directory.path}${Platform.pathSeparator}cutoff.tmp',
+        );
         await plain.writeAsBytes([1, 2, 3]);
         await empty.writeAsBytes([]);
         final sparseHandle = await sparse.open(mode: FileMode.write);
@@ -250,12 +270,18 @@ void main() {
           DateTime.fromMicrosecondsSinceEpoch(1700000000123456),
         );
         await cutoff.setLastModified(DateTime.utc(2026, 10, 22, 11));
-        await Directory('${directory.path}/nested.bin').create();
-        await Link('${directory.path}/linked.bin').create(plain.path);
-        await File('${directory.path}/unrelated.txt').writeAsBytes([7]);
+        await Directory(
+          '${directory.path}${Platform.pathSeparator}nested.bin',
+        ).create();
+        await Link(
+          '${directory.path}${Platform.pathSeparator}linked.bin',
+        ).create(plain.path);
+        await File(
+          '${directory.path}${Platform.pathSeparator}unrelated.txt',
+        ).writeAsBytes([7]);
         for (var index = 0; index < 1100; index++) {
           await File(
-            '${directory.path}/${index.toString().padLeft(64, '0')}.bin',
+            '${directory.path}${Platform.pathSeparator}${index.toString().padLeft(64, '0')}.bin',
           ).writeAsBytes([index % 251]);
         }
 
@@ -287,10 +313,10 @@ void main() {
     test(
       'native scan excludes resource fork bytes from the logical limit',
       () async {
-        final file = File('${directory.path}/fork.bin');
+        final file = File('${directory.path}${Platform.pathSeparator}fork.bin');
         await file.writeAsBytes([1, 2, 3]);
         await File(
-          '${file.path}/..namedfork/rsrc',
+          '${file.path}${Platform.pathSeparator}..namedfork/rsrc',
         ).writeAsBytes(List.filled(4096, 4));
 
         final files = tryReadDarwinByteCacheDirectory(directory.path);
@@ -305,10 +331,16 @@ void main() {
     test(
       'native failure preserves files and uses complete portable metadata',
       () async {
-        final entry = File('${directory.path}/entry.bin');
-        final other = File('${directory.path}/other.bin');
-        final stale = File('${directory.path}/stale.tmp');
-        final pipe = File('${directory.path}/pipe.bin');
+        final entry = File(
+          '${directory.path}${Platform.pathSeparator}entry.bin',
+        );
+        final other = File(
+          '${directory.path}${Platform.pathSeparator}other.bin',
+        );
+        final stale = File(
+          '${directory.path}${Platform.pathSeparator}stale.tmp',
+        );
+        final pipe = File('${directory.path}${Platform.pathSeparator}pipe.bin');
         await entry.writeAsBytes([1, 2, 3]);
         await other.writeAsBytes([4, 5]);
         await stale.writeAsBytes([6]);
@@ -348,13 +380,19 @@ void main() {
       () async {
         expect(tryReadDarwinByteCacheDirectory(directory.path), isEmpty);
         expect(
-          tryReadDarwinByteCacheDirectory('${directory.path}/missing'),
+          tryReadDarwinByteCacheDirectory(
+            '${directory.path}${Platform.pathSeparator}missing',
+          ),
           isNull,
         );
-        final target = await Directory('${directory.path}/target').create();
-        final file = File('${target.path}/entry.bin');
+        final target = await Directory(
+          '${directory.path}${Platform.pathSeparator}target',
+        ).create();
+        final file = File('${target.path}${Platform.pathSeparator}entry.bin');
         await file.writeAsBytes([1, 2]);
-        final root = await Link('${directory.path}/root').create(target.path);
+        final root = await Link(
+          '${directory.path}${Platform.pathSeparator}root',
+        ).create(target.path);
 
         final files = tryReadDarwinByteCacheDirectory(root.path);
 

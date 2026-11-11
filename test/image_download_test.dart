@@ -430,7 +430,10 @@ void main() {
       expect(environment.suggestedName, isNull);
       final staging = File(environment.sharedPath!).parent;
       expect(staging.parent.path, temporary.path);
-      expect(staging.path, startsWith('${temporary.path}/image-share-'));
+      expect(
+        staging.path,
+        startsWith('${temporary.path}${Platform.pathSeparator}image-share-'),
+      );
       expect(environment.filename, 'Private scan.webp');
       if (!Platform.isWindows) {
         expect(environment.sharedMode, 0x180); // 0600

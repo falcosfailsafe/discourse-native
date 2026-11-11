@@ -29,7 +29,10 @@ void main() {
       prefix: 'staging-',
       filename: 'report.txt',
       use: (file) async {
-        expect(file.parent.path, startsWith('${parent.path}/staging-'));
+        expect(
+          file.parent.path,
+          startsWith('${parent.path}${Platform.pathSeparator}staging-'),
+        );
         if (!Platform.isWindows) {
           expect((await file.parent.stat()).mode & 0x1ff, 0x1c0); // 0700
           expect((await file.stat()).mode & 0x1ff, 0x180); // 0600
@@ -64,7 +67,10 @@ void main() {
         prefix: 'staging-',
         filename: 'report.jsonl',
         use: (file) async {
-          expect(file.parent.path, startsWith('${parent.path}/staging-'));
+          expect(
+            file.parent.path,
+            startsWith('${parent.path}${Platform.pathSeparator}staging-'),
+          );
           expect(file.uri.pathSegments.last, 'report.jsonl');
           expect(await file.exists(), isFalse);
           if (!Platform.isWindows) {

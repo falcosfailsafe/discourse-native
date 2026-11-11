@@ -658,7 +658,9 @@ void main() {
 
       expect(primary.values[stateKey], 'deleted');
       expect(primary.values.containsKey(key), isFalse);
-      expect((await lock.stat()).mode & 0x1ff, 0x180); // 0600
+      if (!Platform.isWindows) {
+        expect((await lock.stat()).mode & 0x1ff, 0x180); // 0600
+      }
     });
 
     test('replacement migrators share the primary transaction owner', () async {

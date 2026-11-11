@@ -241,7 +241,9 @@ void main() {
         expect(file.parent.parent.path, temporary.path);
         expect(
           file.parent.path,
-          startsWith('${temporary.path}/calendar-share-'),
+          startsWith(
+            '${temporary.path}${Platform.pathSeparator}calendar-share-',
+          ),
         );
         expect(file.uri.pathSegments.last, 'my-events.ics');
         if (!Platform.isWindows) {

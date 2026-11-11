@@ -267,8 +267,12 @@ void main() {
         2,
       ], now.subtract(const Duration(hours: 1)));
       final nested = await Directory('${directory.path}/nested.bin').create();
-      final nestedFile = File('${nested.path}/entry.bin');
-      final unrelated = File('${directory.path}/notes.txt');
+      final nestedFile = File(
+        '${nested.path}${Platform.pathSeparator}entry.bin',
+      );
+      final unrelated = File(
+        '${directory.path}${Platform.pathSeparator}notes.txt',
+      );
       await nestedFile.writeAsBytes([4]);
       await unrelated.writeAsBytes([5]);
       final link = await Link(

@@ -1,3 +1,6 @@
+@TestOn('!windows')
+library;
+
 import 'dart:io';
 
 import 'package:discourse_native/src/data/linux_application_directories.dart';
