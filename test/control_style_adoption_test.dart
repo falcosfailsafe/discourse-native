@@ -40,8 +40,9 @@ void main() {
         continue;
       }
       final overrides = buttonStyleOverrides(file.readAsStringSync());
-      if (overrides.isNotEmpty)
+      if (overrides.isNotEmpty) {
         actual[file.path.replaceAll(r'\', '/')] = overrides;
+      }
     }
     expect(
       actual,

@@ -15,8 +15,9 @@ void main() {
 
     for (final entity in Directory('lib/src').listSync(recursive: true)) {
       if (entity is! File ||
-          !entity.path.replaceAll(r'\', '/').endsWith('.dart'))
+          !entity.path.replaceAll(r'\', '/').endsWith('.dart')) {
         continue;
+      }
 
       final source = entity.readAsStringSync();
       for (final pattern in [_literalFontSize, _literalCssFontSize]) {
