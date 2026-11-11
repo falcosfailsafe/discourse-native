@@ -116,6 +116,7 @@ struct Options {
   int throttle_at = -1;    // seconds: cap peer 0's bitrate far below the stream's
   int unthrottle_at = -1;  // seconds: lift the cap again
   int throttle_kbps = 2000;
+  double bwe_min_fraction = 1.0;  // connection's minimum bandwidth estimate, as a fraction of the preset rate (the app uses 1.0)
   int max_height = 0;        // preset by height instead of --scale
   int report_every = 0;      // seconds between load reports (0: only for runs over 40 s)
   int change_mode_at = -1;   // seconds: change a display's mode mid-share
@@ -434,7 +435,9 @@ class Harness {
     if (shared) {
       char err[256] = {};
       const long long bps = resolved->bitrate_bps;
-      if (!LibWebRTCSharedScreenSetPeerBitrate(raw->send.get(), static_cast<int>(bps),
+      // The app pins min = start = max = the preset's rate (bwe_min_fraction 1.0).
+      const int min_bps = static_cast<int>(static_cast<double>(bps) * opt_.bwe_min_fraction);
+      if (!LibWebRTCSharedScreenSetPeerBitrate(raw->send.get(), min_bps,
                                                static_cast<int>(bps), static_cast<int>(bps),
                                                err, sizeof(err))) {
         *error = std::string("SetPeerBitrate: ") + err;
@@ -582,6 +585,7 @@ int main(int argc, char** argv) {
     else if (arg("--unthrottle-at")) opt.unthrottle_at = std::atoi(argv[++i]);
     else if (arg("--throttle-kbps")) opt.throttle_kbps = std::atoi(argv[++i]);
     else if (arg("--max-height")) opt.max_height = std::atoi(argv[++i]);
+    else if (arg("--bwe-min-fraction")) opt.bwe_min_fraction = std::atof(argv[++i]);
     else if (arg("--report-every")) opt.report_every = std::atoi(argv[++i]);
     else if (arg("--change-mode-at")) opt.change_mode_at = std::atoi(argv[++i]);
     else if (arg("--change-mode")) opt.change_mode = argv[++i];  // WxHxHZ
@@ -731,7 +735,8 @@ int main(int argc, char** argv) {
           bytes_last.resize(h.peers_.size(), 0);
           received_last.resize(h.peers_.size(), 0);
           double min_fps = 1e9, sum_fps = 0, min_recv = 1e9, sum_recv = 0; int live = 0;
-          long long dropped_total = 0, freezes_total = 0, lost_total = 0;
+          long long dropped_total = 0, freezes_total = 0, lost_total = 0, nack_total = 0, pli_total = 0;
+          double freeze_seconds = 0;
           double tx_bits = 0; std::string limit = "none";
           for (size_t i = 0; i < h.peers_.size(); ++i) {
             if (h.peers_[i]->closed) continue;
@@ -748,6 +753,9 @@ int main(int argc, char** argv) {
             dropped_total += static_cast<long long>(ToD(JsonField(in, "framesDropped")));
             freezes_total += static_cast<long long>(ToD(JsonField(in, "freezeCount")));
             lost_total += static_cast<long long>(ToD(JsonField(in, "packetsLost")));
+            nack_total += static_cast<long long>(ToD(JsonField(in, "nackCount")));
+            pli_total += static_cast<long long>(ToD(JsonField(in, "pliCount")));
+            freeze_seconds += ToD(JsonField(in, "totalFreezesDuration"));
             const std::string out = h.Stats(h.peers_[i]->send, "outbound-rtp");
             const double bytes = ToD(JsonField(out, "bytesSent"));
             tx_bits += (bytes - bytes_last[i]) * 8.0;
@@ -760,9 +768,9 @@ int main(int argc, char** argv) {
               "nvidia-smi --query-gpu=utilization.gpu,utilization.encoder,memory.used,"
               "encoder.stats.sessionCount --format=csv,noheader,nounits 2>&1");
           std::printf("[t=%3d s] received fps min %.1f avg %.1f, decoded min %.1f avg %.1f | tx %.1f Mbps for %d peer(s), limit %s | "
-                      "dropped %lld freezes %lld lost %lld | proc %.0f MB %lu handles cpu %.0f%% | gpu,enc%%,MiB,sessions: %s\n",
+                      "dropped %lld freezes %lld (%.1f s) lost %lld nack %lld pli %lld | proc %.0f MB %lu handles cpu %.0f%% | gpu,enc%%,MiB,sessions: %s\n",
                       s, min_recv, live ? sum_recv / live : 0.0, min_fps, live ? sum_fps / live : 0.0, tx_mbps, live, limit.c_str(), dropped_total,
-                      freezes_total, lost_total, now_proc.private_mb, now_proc.handles, cpu, gpu.c_str());
+                      freezes_total, freeze_seconds, lost_total, nack_total, pli_total, now_proc.private_mb, now_proc.handles, cpu, gpu.c_str());
           window_min_fps.push_back(min_fps);
           window_min_recv.push_back(min_recv);
           window_tx_mbps.push_back(live ? tx_mbps / live : 0.0);

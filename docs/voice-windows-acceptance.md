@@ -337,6 +337,55 @@ the capability-cache finding below), so the software cells have six samples.
 The NVENC rows come from a separate matrix in a fresh process with
 `hardware=true` confirmed in every row, encoder `SharedNVENC` in every row.
 
+### Network impairment (packet loss, latency, a bandwidth ceiling)
+
+[clumsy](https://github.com/jagt/clumsy) 0.3 (MIT, on the signed WinDivert driver)
+impaired the same-host UDP between the sender and the viewers; `scenarios/impair*.ps1`.
+Two viewers at the 720p preset (2560×720, 10 Mbps each, about 19 Mbps of media),
+40 s per case. "Decoded" is the steady-state rate after the first seconds.
+
+| Condition | Decoded fps per viewer | Notes |
+| --- | --- | --- |
+| None | 57.7 | control |
+| 1% packet loss | 57.8 | |
+| 3% packet loss | 55.4 | |
+| 10% packet loss | 49.3 to 50.5 | about 5,400 packets lost and 5,700 NACKs in 24 s; viewers froze for about 4 s each in that time |
+| 50 ms added each way (about 100 ms RTT) | 57.7 | slower start only |
+| 150 ms added each way (about 300 ms RTT) | 57.3 | |
+| 3% loss and 50 ms each way | 53.8 to 55.0 | |
+| 3% loss at 3840×1080, 25 Mbps each | 51.3 to 52.5 | decoder-bound |
+| Link big enough (24 Mbps for 19) | 57.7 | |
+
+Loss and latency are absorbed by NACK retransmission with no PLI: the share
+stays smooth, with short freezes at the higher loss rates.
+
+**A link that is too small is a different matter**, and it exposes a design
+risk. The app pins the connection's minimum bandwidth estimate to the preset's
+rate (`SetPeerBitrate` min = start = max, as the plan prescribes), so libwebrtc
+is never allowed to back off. With a link smaller than the media:
+
+| Link (media about 19 Mbps) | Sender transmits | Delivered (last window) | Decoded, steady |
+| --- | --- | --- | --- |
+| 24 Mbps (enough) | 19.2 Mbps | 58.0 fps | 57.8 fps |
+| 16 Mbps, **app setting** (minimum 100%) | **92.6 Mbps** | 3.6 fps | 24 and 29 fps |
+| 16 Mbps, minimum 25% | **15.7 Mbps** | 46.1 fps | 42 and 26 fps |
+| 16 Mbps, minimum 5% | **15.6 Mbps** | 45.7 fps | 30 and 49 fps |
+| 4.8 Mbps, **app setting** | **43.5 Mbps** | 0.8 fps | 1.2 and 0.8 fps |
+| 4.8 Mbps, minimum 25% | **5.1 Mbps** | 13.8 fps | 5.9 and 5.3 fps |
+| 4.8 Mbps, minimum 5% | **5.0 Mbps** | 12.6 fps | 7.9 and 5.3 fps |
+
+With the minimum pinned at the preset rate, a viewer on a link that is too
+small makes the sender transmit **six to nine times what the link can carry**
+(retransmissions and the fixed pacing rate), and delivery collapses to about
+one frame per second. Lowering the minimum estimate makes the sender follow the
+link, avoids that storm, and delivers several times more frames. In a mesh the
+sender's upload is shared, so one struggling viewer could also starve the other
+peers and the call's audio. The preset rate is still the encoder's fixed rate;
+what changes is whether libwebrtc may lower its estimate when the link cannot
+carry it. This needs a decision (the plan chose the pin to avoid freezes while
+the estimate climbs), with `bwe-min-fraction` in `shared_screen_peers_test`
+available to evaluate alternatives.
+
 ### Findings from these runs
 
 1. **The encoder capability was cached forever (fixed in `.6`, verified).**
@@ -363,7 +412,8 @@ The NVENC rows come from a separate matrix in a fresh process with
 4. **The bitrate cap is a hard ceiling for upload.** Under overload libwebrtc
    holds each peer to the preset rate and drops frames instead of exceeding it,
    which is the behaviour the plan wants for a 300 Mbps link.
-5. **Receiver decode is the ceiling at 3840×1080.** One software decoder tops
+5. **A pinned minimum bandwidth estimate floods an undersized link** (table above): up to 9 times the link rate with delivery near zero, against a sender that follows the link when the minimum is lowered.
+6. **Receiver decode is the ceiling at 3840×1080.** One software decoder tops
    out near 55 fps on worst-case content, three near 50.
 
 ### Bug found and fixed on this machine
@@ -401,6 +451,6 @@ the bundled DLL.
 - The Flutter **UI**: the session class was run (above), but not the preset
   picker widget, the placeholder tile, the 32:9 tile layout, or the app against
   a real Discourse site and signaling server.
-- Packet loss on the network (the starved peer above is bandwidth-driven, not
-  random loss) and the exact first recovery key frame.
+- Packet loss on a real internet path (the impairment above is synthetic and
+  on the same host) and the exact first recovery key frame.
 - A monitor picker (none exists yet).
