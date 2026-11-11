@@ -19,14 +19,16 @@ void main() {
 
     for (final entity in Directory('lib').listSync(recursive: true)) {
       if (entity is! File ||
-          !entity.path.endsWith('.dart') ||
-          entity.path.startsWith('lib/src/ui/')) {
+          !entity.path.replaceAll(r'\', '/').endsWith('.dart') ||
+          entity.path.replaceAll(r'\', '/').startsWith('lib/src/ui/')) {
         continue;
       }
       final code = controlCode(entity.readAsStringSync());
       for (final match in _frameworkControlConstructor.allMatches(code)) {
         final line = '\n'.allMatches(code.substring(0, match.start)).length + 1;
-        offenders.add('${entity.path}:$line: ${match[0]}');
+        offenders.add(
+          '${entity.path.replaceAll(r'\', '/')}:$line: ${match[0]}',
+        );
       }
     }
 

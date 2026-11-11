@@ -13,12 +13,12 @@ void main() {
     for (final file in Directory(
       'lib/src',
     ).listSync(recursive: true).whereType<File>()) {
-      if (!file.path.endsWith('.dart') ||
-          file.path.endsWith('/d_button.dart')) {
+      if (!file.path.replaceAll(r'\', '/').endsWith('.dart') ||
+          file.path.replaceAll(r'\', '/').endsWith('/d_button.dart')) {
         continue;
       }
       if (legacy.hasMatch(controlCode(file.readAsStringSync()))) {
-        offenders.add(file.path);
+        offenders.add(file.path.replaceAll(r'\', '/'));
       }
     }
     expect(
@@ -34,13 +34,14 @@ void main() {
     for (final file in Directory(
       'lib/src',
     ).listSync(recursive: true).whereType<File>()) {
-      if (!file.path.endsWith('.dart') ||
-          file.path.contains('/ui/') ||
-          file.path.contains('/styleguide/')) {
+      if (!file.path.replaceAll(r'\', '/').endsWith('.dart') ||
+          file.path.replaceAll(r'\', '/').contains('/ui/') ||
+          file.path.replaceAll(r'\', '/').contains('/styleguide/')) {
         continue;
       }
       final overrides = buttonStyleOverrides(file.readAsStringSync());
-      if (overrides.isNotEmpty) actual[file.path] = overrides;
+      if (overrides.isNotEmpty)
+        actual[file.path.replaceAll(r'\', '/')] = overrides;
     }
     expect(
       actual,

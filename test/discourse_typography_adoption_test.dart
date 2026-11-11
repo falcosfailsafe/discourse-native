@@ -14,7 +14,9 @@ void main() {
     final violations = <String>[];
 
     for (final entity in Directory('lib/src').listSync(recursive: true)) {
-      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      if (entity is! File ||
+          !entity.path.replaceAll(r'\', '/').endsWith('.dart'))
+        continue;
 
       final source = entity.readAsStringSync();
       for (final pattern in [_literalFontSize, _literalCssFontSize]) {
@@ -32,7 +34,9 @@ void main() {
             lineStart,
             lineEnd == -1 ? source.length : lineEnd,
           );
-          violations.add('${entity.path}:$lineNumber: ${line.trim()}');
+          violations.add(
+            '${entity.path.replaceAll(r'\', '/')}:$lineNumber: ${line.trim()}',
+          );
         }
       }
     }

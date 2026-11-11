@@ -17,14 +17,14 @@ void main() {
     for (final entity in Directory('lib').listSync(recursive: true)) {
       // The UI kit and its styleguide keep the kit's own muted default.
       if (entity is! File ||
-          !entity.path.endsWith('.dart') ||
-          entity.path.startsWith('lib/src/ui/') ||
-          entity.path.startsWith('lib/src/styleguide/')) {
+          !entity.path.replaceAll(r'\', '/').endsWith('.dart') ||
+          entity.path.replaceAll(r'\', '/').startsWith('lib/src/ui/') ||
+          entity.path.replaceAll(r'\', '/').startsWith('lib/src/styleguide/')) {
         continue;
       }
       final code = controlCode(entity.readAsStringSync());
       String at(Match match) =>
-          '${entity.path}:'
+          '${entity.path.replaceAll(r'\', '/')}:'
           '${'\n'.allMatches(code.substring(0, match.start)).length + 1}';
       for (final region in _region.allMatches(code)) {
         regions.add(at(region));
