@@ -386,8 +386,47 @@ carry it. This needs a decision (the plan chose the pin to avoid freezes while
 the estimate climbs), with `bwe-min-fraction` in `shared_screen_peers_test`
 available to evaluate alternatives.
 
+### The app itself on Windows (it does not start)
+
+Everything above drives the native library and the Voice session class. The
+real app, `discourse_native.exe`, had never been launched on Windows. Launched
+in the console session it shows **only a grey window** in a Release build (and a
+red error screen in Debug, which reads *"Unsupported operation: Private storage
+is unavailable on this platform"*). A trivial Flutter app renders fine on the
+same machine, so this is the app: `lib/src/data/private_storage.dart` has
+credential storage for Apple, Android and Linux, and throws on Windows, and the
+first widget build constructs `HttpBasicAuthStore.instance`.
+
+Running the Voice tests natively on Windows for the first time gave the same
+picture: **40 of about 790 failed**, 35 of them with that exception.
+
+An experiment on a separate branch (`experiment/windows-launch`, **not for
+merge**) shows how far the gap is. Three changes make the app start and render:
+
+1. a Windows branch in `private_storage.dart` using the existing file store
+   under `%LOCALAPPDATA%` (a plaintext file: a real Windows store should
+   encrypt with DPAPI and restrict the file's ACL);
+2. a Windows file lock in `private_file_permissions.dart` (the POSIX version
+   calls libc `open` and `flock` through FFI, which do not exist on Windows;
+   Dart's own `RandomAccessFile.lock` works);
+3. draft persistence for Windows in `draft_store.dart`, which also threw.
+
+With those, the app launches and shows its "Add a site" screen with the
+suggested communities and their icons loaded, and the Voice tests drop from 40
+failures to 4. Those 4 were test issues, fixed on the main branch: a provenance
+path-separator comparison, one test that still assumed Share screen exists only
+on macOS and Linux (the app deliberately treats Windows as a desktop platform),
+and one session test that reached the real plugin without a test binding.
+
+So Voice on Windows cannot be exercised through the app until Windows
+credential, lock and draft storage exist. This bears on the plan's open
+question of whether Windows is a committed target, and on the Phase 0 line
+"a mesh call with screen share works on Windows". Not run: a real Voice room,
+which needs a Discourse server with the plugin.
+
 ### Findings from these runs
 
+0. **The app does not start on Windows** (section above): there is no Windows credential, lock or draft storage.
 1. **The encoder capability was cached forever (fixed in `.6`, verified).**
    `GetEncoderCapabilities` probed once per process. A probe made while the
    display was rotated, in HDR, detached or mid-change stayed "unavailable" for

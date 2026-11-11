@@ -44,6 +44,10 @@ recovering at a key frame while the others are unaffected, and a clean teardown
   path was exercised only as a plain software encode plus teardown);
 - "no CPU frame copies" is by construction (the frames never leave the GPU) and
   was not measured;
+- **the app does not start on Windows**: it has no Windows credential, file-lock
+  or draft storage, so it shows a blank window (details and an experiment in
+  the acceptance doc). The Voice widget tests pass on Windows once those are
+  provided, but no real Voice room has been entered;
 - the Flutter UI (the preset picker, the placeholder tile, the 32:9 layout) has
   never been run on Windows. The session class `MeshVoiceMediaSession` has: it
   shared to three viewers through NVENC and fell back correctly (see the
