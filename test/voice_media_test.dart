@@ -4050,6 +4050,8 @@ MeshVoiceMediaSession _meshSession({
   VoiceMediaDeviceEnumerator? enumerateDevices,
   VoiceSignalSender? sendSignal,
   VoiceTrackVolumeSetter? setTrackVolume,
+  Duration? sharedShareWatchdogInterval,
+  int? sharedShareWatchdogStalls,
 }) => MeshVoiceMediaSession(
   join: _meshJoin(
     localUserId: localUserId,
@@ -4064,6 +4066,10 @@ MeshVoiceMediaSession _meshSession({
   createPeerConnection: createPeerConnection ?? (_) async => peer,
   getUserMedia: getUserMedia,
   getDisplayMedia: getDisplayMedia,
+  // Tests run the shared-share watchdog quickly, or not at all.
+  sharedShareWatchdogInterval:
+      sharedShareWatchdogInterval ?? const Duration(hours: 1),
+  sharedShareWatchdogStalls: sharedShareWatchdogStalls ?? 3,
   setPeerBitrate:
       setPeerBitrate ??
       (
@@ -5098,6 +5104,8 @@ void _sharedScreenEncodingTests() {
       bool noCodecInfo = false,
       List<rtc.RTCRtpCodecCapability>? sender,
       Future<void> Function(_BitrateCall)? onBitrate,
+      Duration? watchdog,
+      int? stalls,
     }) async {
       final peer = _FakePeerConnection(
         videoCodecs: noCodecInfo ? null : negotiated ?? _highH264,
@@ -5108,6 +5116,8 @@ void _sharedScreenEncodingTests() {
       final media = _meshSession(
         peer: peer,
         audioPublishingAllowed: false,
+        sharedShareWatchdogInterval: watchdog,
+        sharedShareWatchdogStalls: stalls,
         getSharedScreenCapabilities:
             capabilities ?? () async => _nvencCapabilities,
         getSharedScreenMedia: (preset) {
@@ -5156,6 +5166,100 @@ void _sharedScreenEncodingTests() {
         bitrates: bitrates,
       );
     }
+
+    List<rtc.StatsReport> outbound(int frames) => [
+      rtc.StatsReport('out-1', 'outbound-rtp', 1, {
+        'kind': 'video',
+        'framesEncoded': frames,
+      }),
+    ];
+
+    Future<void> until(bool Function() done, {int seconds = 5}) async {
+      final deadline = DateTime.now().add(Duration(seconds: seconds));
+      while (!done() && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    }
+
+    group('watchdog', () {
+      test('restarts a share whose encoder stopped producing frames', () async {
+        final t = await start(
+          watchdog: const Duration(milliseconds: 15),
+          stalls: 2,
+        );
+        t.peer.stats = outbound(100); // never advances
+        await t.media.setScreenShareEnabled(true);
+        expect(t.sharedRequests, hasLength(1));
+
+        await until(() => t.sharedRequests.length >= 2);
+
+        expect(t.sharedRequests.length, greaterThanOrEqualTo(2));
+        expect(t.media.screenSharing, isTrue);
+      });
+
+      test('leaves a share alone while frames keep arriving', () async {
+        final t = await start(
+          watchdog: const Duration(milliseconds: 15),
+          stalls: 2,
+        );
+        var frames = 0;
+        final ticker = Timer.periodic(const Duration(milliseconds: 5), (_) {
+          t.peer.stats = outbound(frames += 3);
+        });
+        addTearDown(ticker.cancel);
+        await t.media.setScreenShareEnabled(true);
+
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+
+        expect(t.sharedRequests, hasLength(1));
+        expect(t.media.screenSharing, isTrue);
+      });
+
+      test('does nothing when no statistics are available', () async {
+        final t = await start(
+          watchdog: const Duration(milliseconds: 15),
+          stalls: 2,
+        );
+        t.peer.stats = const []; // no viewer has the stream yet
+        await t.media.setScreenShareEnabled(true);
+
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+
+        expect(t.sharedRequests, hasLength(1));
+        expect(t.media.screenSharing, isTrue);
+      });
+
+      test('ends the share after repeated restarts do not help', () async {
+        final t = await start(
+          watchdog: const Duration(milliseconds: 10),
+          stalls: 1,
+        );
+        t.peer.stats = outbound(7); // always stalled
+        await t.media.setScreenShareEnabled(true);
+
+        await until(() => !t.media.screenSharing);
+
+        // The first start plus three restarts, then it gives up.
+        expect(t.sharedRequests, hasLength(4));
+        expect(t.media.screenSharing, isFalse);
+      });
+
+      test('stops watching when the user stops sharing', () async {
+        final t = await start(
+          watchdog: const Duration(milliseconds: 10),
+          stalls: 1,
+        );
+        t.peer.stats = outbound(7);
+        await t.media.setScreenShareEnabled(true);
+        await t.media.setScreenShareEnabled(false);
+        final requests = t.sharedRequests.length;
+
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+
+        expect(t.sharedRequests, hasLength(requests));
+        expect(t.media.screenSharing, isFalse);
+      });
+    });
 
     test(
       'uses current negotiated parameters for the cached video sender',

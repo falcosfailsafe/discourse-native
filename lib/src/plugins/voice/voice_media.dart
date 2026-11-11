@@ -476,7 +476,11 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier
     VoicePeerBitrateSetter? setPeerBitrate,
     VoiceMediaDeviceEnumerator? enumerateDevices,
     VoiceTrackVolumeSetter? setTrackVolume,
-  }) : _createPeerConnection = createPeerConnection ?? rtc.createPeerConnection,
+    Duration sharedShareWatchdogInterval = const Duration(seconds: 2),
+    int sharedShareWatchdogStalls = 3,
+  }) : _watchdogInterval = sharedShareWatchdogInterval,
+       _watchdogStallLimit = sharedShareWatchdogStalls,
+       _createPeerConnection = createPeerConnection ?? rtc.createPeerConnection,
        _getUserMedia =
            getUserMedia ??
            ((constraints) =>
@@ -538,6 +542,22 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier
   Future<bool>? _sharedEncodingProbe;
   bool _sharedEncodingDisabled = false;
   final Set<int> _sharedUnsupportedPeers = {};
+
+  // A shared-encode share can die under the app without any signal: the native
+  // capture fails for good when the display changes size or goes away, the
+  // encoder is released, and every viewer is left on the last frame while the
+  // session still reports sharing. The watchdog notices the encoded-frame
+  // counter standing still and restarts the share (a fresh capture sees the
+  // new display); after a few failed restarts it ends the share.
+  final Duration _watchdogInterval;
+  final int _watchdogStallLimit;
+  Timer? _shareWatchdog;
+  bool _watchdogBusy = false;
+  int _watchdogFrames = -1;
+  int _watchdogStalls = 0;
+  int _watchdogHealthy = 0;
+  int _watchdogRestarts = 0;
+  static const int _watchdogMaxRestarts = 3;
   VoiceScreenSharePreset _screenSharePreset =
       VoiceScreenSharePreset.defaultPreset;
   bool _deafened = false;
@@ -1620,6 +1640,7 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier
   @override
   Future<void> setScreenShareEnabled(bool enabled) {
     final revision = ++_screenShareRevision;
+    if (enabled) _watchdogRestarts = 0;
     // As with a mute, the controller reports the share stopped at once while
     // sender replacement waits its turn behind signaling; silence it first.
     if (!enabled) _setScreenTracksEnabled(false);
@@ -1638,6 +1659,7 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier
     if (!enabled) {
       final stream = _screenStream;
       if (stream == null) return;
+      _stopShareWatchdog();
       try {
         await _setSourceTrack(_MeshSource.video, _cameraTrack);
         await _setSourceTrack(_MeshSource.screenAudio, null);
@@ -1693,6 +1715,7 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier
       Error.throwWithStackTrace(error, stackTrace);
     }
     changed();
+    _startShareWatchdog();
   }
 
   static Future<rtc.MediaStream> _captureDisplayMedia(
@@ -1868,7 +1891,96 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier
     }
   }
 
+  void _startShareWatchdog() {
+    _stopShareWatchdog();
+    if (!_screenShareShared || _watchdogInterval <= Duration.zero) return;
+    _watchdogFrames = -1;
+    _watchdogStalls = 0;
+    _watchdogHealthy = 0;
+    _shareWatchdog = Timer.periodic(
+      _watchdogInterval,
+      (_) => unawaited(_checkSharedShare()),
+    );
+  }
+
+  void _stopShareWatchdog() {
+    _shareWatchdog?.cancel();
+    _shareWatchdog = null;
+  }
+
+  Future<void> _checkSharedShare() async {
+    if (_watchdogBusy || !_screenShareShared || _closing || disposed) return;
+    _watchdogBusy = true;
+    try {
+      final frames = await _sharedFramesEncoded();
+      // No viewer has the stream yet, or no statistics: nothing to judge.
+      if (frames == null || !_screenShareShared) return;
+      if (frames > _watchdogFrames) {
+        _watchdogFrames = frames;
+        _watchdogStalls = 0;
+        // A restart that holds for a while earns its allowance back.
+        if (++_watchdogHealthy >= 10) _watchdogRestarts = 0;
+        return;
+      }
+      _watchdogHealthy = 0;
+      if (++_watchdogStalls < _watchdogStallLimit) return;
+      _watchdogStalls = 0;
+      await _restartStalledSharedShare();
+    } catch (_) {
+      // The watchdog must never take the call down with it.
+    } finally {
+      _watchdogBusy = false;
+    }
+  }
+
+  /// Frames the shared encoder has produced, read from the first admitted
+  /// peer's outbound video statistics. Null when there is nothing to read.
+  Future<int?> _sharedFramesEncoded() async {
+    for (final entry in _peers.entries.toList()) {
+      if (_sharedUnsupportedPeers.contains(entry.key)) continue;
+      List<rtc.StatsReport> reports;
+      try {
+        reports = await entry.value.getStats();
+      } catch (_) {
+        continue;
+      }
+      for (final report in reports) {
+        if (report.type != 'outbound-rtp') continue;
+        final values = report.values;
+        if ('${values['kind'] ?? values['mediaType']}' != 'video') continue;
+        final frames = values['framesEncoded'];
+        if (frames is num) return frames.toInt();
+      }
+    }
+    return null;
+  }
+
+  Future<void> _restartStalledSharedShare() async {
+    final stream = _screenStream;
+    if (stream == null || !_screenShareShared) return;
+    if (_watchdogRestarts >= _watchdogMaxRestarts) {
+      // Restarting does not help: end the share, as if the capture had ended.
+      _stopShareWatchdog();
+      await _serialize(() => _endScreenShare(stream));
+      return;
+    }
+    _watchdogRestarts++;
+    await _serialize(() async {
+      if (!identical(_screenStream, stream)) return;
+      await _setScreenShareEnabled(false, ++_screenShareRevision);
+      if (_closing || disposed) return;
+      try {
+        await _setScreenShareEnabled(true, ++_screenShareRevision);
+      } catch (_) {
+        // The capture could not start again (no display, device lost): the
+        // share stays stopped and the controller reports it.
+        changed();
+      }
+    });
+  }
+
   Future<void> _endScreenShare(rtc.MediaStream stream) async {
+    _stopShareWatchdog();
     if (!identical(_screenStream, stream)) return;
     // An ended capture cannot be restored by rolling senders back. Relinquish
     // ownership even when a peer cannot switch to the camera or detach.
@@ -2048,6 +2160,7 @@ final class MeshVoiceMediaSession extends _VoiceMediaNotifier
       silenceCapture();
       _speakingTimer?.cancel();
       _speakingTimer = null;
+      _stopShareWatchdog();
 
       for (final timer in _candidateTimers.values) {
         timer.cancel();
